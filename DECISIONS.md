@@ -108,3 +108,41 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **Over-limit `/lawn/*` requests get a tiny static "lawn is full" page (≈80 B, no links, no render) instead of the full maze page.** §5.3 says "fast, small". In a 6000-vs-5000-cap load test this cut box CPU from 49% to 37.5% and bytes sent from 975 MB to 22 MB, while serving more shed requests.
 - **HEAD on `/lawn/*` no longer renders the page, so it carries no Content-Length.** HEAD is never dripped, and rendering only to count bytes wasted CPU.
 - **The draft `deploy/README.md` was folded into the top-level README.** One place for setup/deploy/teardown docs.
+
+## Final status: untested and open TODOs
+
+### Verified in the build sandbox
+- **Test suite.** `make test` (unit + integration, `-race`), `go vet`, `staticcheck`, gofmt, shellcheck, and `tofu fmt -check` + `tofu validate` are all clean. `tofu plan` was not run because no `VULTR_API_KEY` was set.
+- **Integration test.** A fake crawler reads robots.txt and walks 50 maze pages. The test asserts:
+  - the request rows, the depth reached (49) and the ASN;
+  - all four identity statuses and the `read_the_rules` flag;
+  - the leaderboard, org page, feed.json, blocklist and metrics;
+  - that no non-verified IP appears on any page.
+- **Real binary smoke test.** Every route answered. The drip delivered its first byte at 0.6 ms and then 16 B/s, and a client disconnect was detected. SIGHUP reload, `stats`, and graceful SIGTERM shutdown all worked.
+- **Load test (4-vCPU sandbox, load generator on the same machine).**
+  - 5000 drips: 191 MiB RSS, 5.6% box CPU.
+  - 6000 connections against a 5000 cap: 393 MiB RSS, 37.5% box CPU, 0 errors, 0 5xx.
+- **Deploy pieces checked offline.** Cloud-init renders to valid YAML, and `systemd-analyze verify` and `caddy validate` pass. `backup.sh` and `asn-refresh.sh` were run for real against local files.
+
+### Untested
+- **Nothing has run on a real host.** Untested there: `make infra`, `make deploy`, cloud-init on a Vultr Debian 12 box, `host-setup.sh`/`install.sh`, Caddy certificate issuance, and the hardened unit (`SystemCallFilter`, `MemoryDenyWriteExecute`) against the real binary.
+- **The load test on the spec's 2 vCPU / 2 GB box.** The CPU figures above are from 4 vCPUs.
+- **Real network sources.** Real DNS, real vendor IP-range downloads and the real iptoasn.com file were blocked from the sandbox. The parsers are tested with fixtures and a synthetic 500k-row ASN file.
+- **The GitHub Actions workflows.** They pass `actionlint` but have not run on GitHub.
+- **Swap gap.** The shame directory swap has a sub-millisecond window where `shame/` doesn't exist.
+
+### TODOs
+1. **Crawler verification with `verify: none`.** No official method was found for:
+   - Anthropic (ClaudeBot, Claude-User, Claude-SearchBot): Anthropic says it publishes no IP ranges.
+   - ByteDance (Bytespider): no official documentation.
+   - Meta (meta-externalagent, meta-externalfetcher): no list URL or rDNS scheme on its crawler page.
+   Hits from these UAs are published as "claimed, unverifiable".
+2. **Open the vendor range URLs once by hand before deploy.** WebFetch to vendor sites was blocked, so every `verify` entry was confirmed through vendor-domain web search results rather than a direct read of the page. The URLs are the OpenAI ×3, Common Crawl, and Perplexity ×2 `ip_ranges` lists (Perplexity's docs name `www.perplexity.com`).
+3. **Vultr details that couldn't be confirmed against official docs.**
+   - The OS image name "Debian 12 x64 (bookworm)"; `os_id` in tfvars is the fallback.
+   - That `vc2-2c-2gb` is 2 vCPU / 2 GB.
+   - The user-data size limit; the rendered user-data is about 23 KB.
+   - Whether the DNS zone adds its own NS/SOA records.
+4. **Caddy apt repository.** The keyring and repo URLs come from search results quoting caddyserver.com/docs/install. The unattended-upgrades origin pattern for Caddy's repo is also unconfirmed; worst case, Caddy isn't auto-upgraded.
+5. **The deploy workflow can't reach SSH by default.** GitHub-hosted runners aren't in `admin_cidrs`; add their ranges or use a self-hosted runner.
+6. **Backups stay on the box.** Copy them off-box if the history matters.
