@@ -22,11 +22,11 @@ A single-binary service that traps crawlers that ignore `robots.txt` in an infin
 
 ## 3. Stack
 
-- **Language:** Go (latest stable), standard library first. Allowed deps: a SQLite driver (`modernc.org/sqlite` preferred for pure Go), `oschwald/maxminddb-golang`, a YAML parser.
+- **Language:** Go (latest stable), standard library first. Allowed deps: a SQLite driver (`modernc.org/sqlite` preferred for pure Go), a YAML parser. Anything else is allowed if it's widely used and well maintained; log the choice in DECISIONS.md.
 - **Storage:** SQLite in WAL mode.
-- **ASN data:** MaxMind GeoLite2-ASN `.mmdb`, with the path set in config. Never commit it to the repo.
+- **ASN data:** the free iptoasn.com `ip2asn-combined.tsv.gz` dataset, which needs no account or license key. Download it at deploy time, refresh it weekly via a systemd timer, and load it into an in-memory range table. Never commit it to the repo.
 - **Front end proxy:** Caddy for TLS, passing the real client IP via `X-Forwarded-For`. The app must only trust that header from configured proxy IPs.
-- **Deploy:** systemd unit and a sample Caddyfile.
+- **Deploy:** fully as code; see section 15.
 - **No Cloudflare or CDN** in front of `/lawn/`.
 
 ## 4. Routes
@@ -177,7 +177,7 @@ admin_listen: "127.0.0.1:9090"
 trusted_proxies: ["127.0.0.1/32"]
 server_secret_env: "LAWN_SECRET"
 db_path: "/var/lib/lawn/lawn.db"
-asn_db_path: "/var/lib/lawn/GeoLite2-ASN.mmdb"
+asn_db_path: "/var/lib/lawn/ip2asn-combined.tsv.gz"
 public_dir: "/var/lib/lawn/public"
 corpus_dir: "./corpus"
 crawlers_file: "./config/crawlers.yaml"
@@ -213,7 +213,10 @@ internal/server/     routing, proxy IP handling, timeouts
 web/templates/       homepage + shame templates
 corpus/              public-domain training texts
 config/              config.example.yaml, crawlers.yaml
-deploy/              lawn.service, Caddyfile.example
+infra/               OpenTofu (Vultr instance, firewall, DNS), cloud-init
+deploy/              lawn.service, timers, Caddyfile, deploy script
+.github/workflows/   CI (test, lint, build) and deploy
+Makefile             single entry point for everything
 ```
 
 ## 12. Testing & Acceptance
@@ -251,8 +254,40 @@ deploy/              lawn.service, Caddyfile.example
 
 ## 14. Instructions for Claude Code
 
-- Work milestone by milestone. Commit at each milestone with passing tests.
-- Prefer the standard library, and ask before adding any dependency not listed in section 3.
-- Don't fabricate vendor verification URLs or IP ranges. Leave TODOs where official sources can't be confirmed.
+- **Run fully autonomously. Never stop to ask questions.** When the spec is ambiguous or wrong, make the best decision, log it in DECISIONS.md with a one-line rationale, and keep going.
+- Use an agent team (or parallel subagents) to build independent packages concurrently. Integrate, run the full test suite, and fix failures before moving on.
+- Work milestone by milestone and commit at each one with passing tests, `go vet`, and `staticcheck`.
+- Don't fabricate vendor verification URLs or IP ranges. Look them up from official vendor docs; where you can't confirm one, set `verify: none` with a TODO.
 - Keep the hot path allocation-light and never block on I/O to SQLite or DNS.
-- Any change to the publication rules in section 8 requires flagging it to me first.
+- The section 8 publication rules are fixed. Don't loosen them.
+- Finish with a README covering first-time setup, deploy, and teardown, and a final summary of what was built, what's untested, and every TODO.
+
+## 15. Infrastructure (everything as code)
+
+**Target:** one dedicated Vultr instance, running nothing else, on its own IP. Isolation matters because this box deliberately attracts abusive traffic.
+
+- **Provisioning:** OpenTofu with the official Vultr provider, in `infra/`. It creates:
+  - A Debian 12 instance, 2 vCPU / 2 GB, region configurable (default `ewr`), with IPv6 enabled.
+  - A Vultr firewall group allowing 22/tcp from a configurable CIDR list only, and 80/443 from anywhere.
+  - A DNS zone and records (apex and `www`, A and AAAA) in Vultr DNS.
+  - An SSH key from a configurable public key path.
+- **Bootstrap:** cloud-init installs Caddy, creates the `lawn` system user and directories, installs the systemd units, sets up unattended-upgrades, and configures journald size caps.
+- **Secrets:** `LAWN_SECRET` is generated once by OpenTofu (`random_password`) and written to `/etc/lawn/env` via cloud-init. No secrets in the repo.
+- **Required inputs from the operator:** only `VULTR_API_KEY` in the environment, an SSH public key path, and an admin CIDR in `infra/terraform.tfvars` (with a committed `terraform.tfvars.example`).
+- **State:** local OpenTofu state, gitignored.
+- **Deploy:** `make deploy` cross-compiles a static linux/amd64 binary, copies it, the templates, the corpus, and the config to the host over SSH, and restarts the service. Deploys must be idempotent and safe to re-run.
+- **Timers:** systemd timers for the weekly ASN data refresh, the daily `lawn verify-refresh`, and a nightly SQLite backup (`VACUUM INTO`) with 7-day rotation on the box.
+- **CI:** GitHub Actions runs tests, vet, staticcheck, and build on every push. A manual `workflow_dispatch` deploy workflow uses repo secrets (`SSH_PRIVATE_KEY`, `DEPLOY_HOST`).
+
+**Makefile targets**
+
+```
+make test        # unit + integration tests
+make infra       # tofu init + apply
+make deploy      # build + ship + restart
+make logs        # tail journald on the host
+make ssh         # shell on the host
+make destroy     # tofu destroy
+```
+
+**Done when** `make infra && make deploy` takes a fresh Vultr account to a live HTTPS site with the maze, logging, and leaderboard running, and no manual steps beyond pointing the domain's nameservers at Vultr.
