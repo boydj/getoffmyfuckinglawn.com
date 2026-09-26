@@ -1,0 +1,50 @@
+{{define "shame-index"}}{{template "shame-head" "Wall of Shame · getoffmyfuckinglawn.com"}}
+<h1>Wall of Shame</h1>
+<p class="lede">Our <a href="/robots.txt">robots.txt</a> has one rule: stay out of <code>/lawn/</code>. Everyone below walked straight onto the grass anyway, so we kept them busy in an endless maze served a few bytes a second. The tables list only what our logs show: which client (as far as it can be verified), how many disallowed pages it fetched, and how long we held it.</p>
+<p class="note">Generated {{.Generated}}. Rebuilt every few minutes. Also available as <a href="feed.json">feed.json</a> and <a href="blocklist.txt">blocklist.txt</a>.</p>
+
+<ul class="stats">
+<li><b>{{hours .All.HeldMs}}</b>bot-hours wasted (all time)</li>
+<li><b>{{.All.Pages}}</b>disallowed pages served (all time)</li>
+<li><b>{{.All.MaxDepth}}</b>deepest crawl ever (links deep)</li>
+</ul>
+<div class="tw"><table>
+<thead><tr><th>Window</th><th>Bot-hours</th><th>Pages</th><th>Sessions</th><th>Bytes</th><th>Max depth</th></tr></thead>
+<tbody>{{range .Windows}}<tr><td>{{.Name}}</td><td>{{hours .M.HeldMs}}</td><td>{{.M.Pages}}</td><td>{{.M.Sessions}}</td><td>{{bytes .M.Bytes}}</td><td>{{.M.MaxDepth}}</td></tr>
+{{end}}</tbody>
+</table></div>
+
+<h2 id="verified">1. Verified offenders</h2>
+<p class="lede">Real crawlers from named companies, verified by the vendor's own published method, that fetched paths robots.txt told them not to.</p>
+{{template "shame-table" .Verified}}
+
+<h2 id="liars">2. Hall of Liars</h2>
+<p class="lede">User agents claiming to be a well-known crawler whose source addresses failed that crawler's published verification. Grouped by the name claimed and the network the requests actually came from.</p>
+{{template "shame-table" .Liars}}
+
+<h2 id="unverifiable">Claimed, unverifiable</h2>
+<p class="lede">User agents naming a crawler whose vendor publishes no way to check it. We can't confirm who these are, so nothing here is presented as confirmed. See the network each came from on its page.</p>
+{{template "shame-table" .Unverifiable}}
+
+<h2 id="asns">3. Top ASNs</h2>
+<p class="lede">Every violator, all statuses, added up by the network (ASN) the requests came from.</p>
+{{template "shame-table" .ASNs}}
+
+<h2 id="read-the-rules">4. Read the rules, ignored them</h2>
+<p class="lede">They fetched robots.txt, then fetched what it disallows in the same session.</p>
+{{if .ReadRules.Rows}}<div class="tw"><table>
+<thead><tr><th>Name</th><th class="l">Status</th><th>Sessions: robots.txt then /lawn/</th><th>Sessions</th><th>Pages</th><th>Hours all</th><th>Last seen</th></tr></thead>
+<tbody>
+{{range .ReadRules.Rows}}{{with .G}}<tr><td class="w"><a href="org/{{.Slug}}/">{{trunc .Name 80}}</a>{{with .Sub}}<br><small>{{trunc . 80}}</small>{{end}}</td><td class="l">{{range .Statuses}}{{template "shame-badge" .}}{{end}}</td>{{with .All}}<td>{{.ReadRules}}</td><td>{{.Sessions}}</td><td>{{.Pages}}</td><td>{{hours .HeldMs}}</td><td>{{when .LastSeen}}</td>{{end}}</tr>{{end}}
+{{end}}</tbody>
+</table></div>
+{{if gt .ReadRules.Total (len .ReadRules.Rows)}}<p class="note">Showing {{len .ReadRules.Rows}} of {{.ReadRules.Total}}.</p>{{end}}
+{{else}}<p class="note">Nobody here yet.</p>{{end}}
+
+<h2 id="labels">What the labels mean</h2>
+{{template "shame-legend"}}
+</main>
+{{template "footer" .RobotsTxt}}
+</body>
+</html>
+{{end}}

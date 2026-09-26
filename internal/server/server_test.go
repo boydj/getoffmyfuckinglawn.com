@@ -115,7 +115,11 @@ type fakeObserver struct {
 	pairs []string
 }
 
-func (o *fakeObserver) Observe(ip, ua string) { o.mu.Lock(); o.pairs = append(o.pairs, ip+"|"+ua); o.mu.Unlock() }
+func (o *fakeObserver) Observe(ip, ua string) {
+	o.mu.Lock()
+	o.pairs = append(o.pairs, ip+"|"+ua)
+	o.mu.Unlock()
+}
 
 type fakeASN map[string]uint32
 

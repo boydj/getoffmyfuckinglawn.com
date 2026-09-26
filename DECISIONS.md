@@ -58,3 +58,47 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **Writer: a failed batch is counted in `Errors` and dropped, not retried.** Memory stays bounded if SQLite is unavailable.
 - **Rollup commits one transaction per UTC day.** Transactions stay bounded; a session continuing across midnight isn't double counted.
 - **PruneIdentities never deletes identities still referenced by raw rows or aggregates.** Rolled-up history keeps its labels.
+- **`config.Validate()` is exported, and `app.New` calls it.** A hand-built `Config` (e.g. `config.Default()`) previously left `Proxies` unparsed, which silently ignored X-Forwarded-For. The integration test caught it.
+- **`lawn gen-robots` loads the config before printing.** Deploy uses it as a pre-swap sanity check, so it now also proves the config parses.
+- **`lawn verify-refresh` force-refetches every range list (`RefreshAll`).** It's the daily timer's job; the in-process loop only refetches stale lists.
+- **`GOMEMLIMIT=400MiB` in `lawn.service`.** A 6000-connection run against the 5000 cap peaked at 390 MiB RSS; a soft heap target keeps GC ahead of the 500 MB budget.
+- **The homepage reuses the shame partials (`style`, `footer`).** The whole site has one stylesheet, and every page carries the same robots.txt footer.
+
+## Shame builder (teammate)
+
+- **`unverifiable` gets its own clearly labelled table, "Claimed, unverifiable", between Hall of Liars and Top ASNs.** It's shown, but never next to or as confirmed rows.
+- **A missing identity row, an unknown status, or a claimed status with no org is displayed as `anonymous`.** This fails safe: never shown as confirmed, never /32.
+- **ASN groups are keyed by ASN number and labelled "AS<n> <org>"; ASN 0/NULL becomes "unknown ASN".** Numbers are unambiguous.
+- **Top ASNs has one row per ASN across all statuses, with a badge for each status present.** Every row still carries its labels.
+- **Hall of Liars groups by (claimed org, ASN).** That's §8's "claimed org and actual ASN org" at ASN granularity.
+- **Anonymous clients have no page of their own; they're described on their ASN's page.** This avoids per-client pages for eyeball networks.
+- **feed.json has one entry per (status, claimed org, ASN); `asn` is null when unknown.** It's the finest grain every section is built from.
+- **Blocklist = every verified offender's /32 or /128, plus /24 or /48 of spoofed (claimed org, ASN) groups with ≥ `blocklist_min_violations` all-time violations.** A threshold ≤ 0 is treated as 1; anonymous and unverifiable are never listed.
+- **The 24h/7d/30d windows use raw rows only; all-time adds `daily_aggregates`.** Retention (90 d) exceeds the largest window.
+- **Sessions are counted only when they contain at least one violation.** The leaderboard is about violations.
+- **Pages are kept under 50 KB by shrinking row caps step by step (top 50 per section down to 1).** A "shown N of M" note appears, and the full data stays in feed.json; the largest page in a 1,204-page stress fixture is 48 KB.
+- **Sample paths are shown only if they match `/lawn/[A-Za-z0-9/_.-]{,120}`; UA strings are truncated to 80–200 chars.** Otherwise a client could publish arbitrary text on the wall by crafting a URL or UA.
+- **Shame pages carry `noindex`; links are relative except in blocklist.txt.** The wall is for humans, and "no external URLs" is grep-testable.
+- **Swap: rename the old tree aside, rename the new one in, delete the old; restore on failure.** There's a sub-millisecond window with no `shame/`; true atomic exchange would need `x/sys` renameat2.
+
+## Infra / deploy (teammate)
+
+- **One idempotent `deploy/host-setup.sh` runs from cloud-init and on every deploy.** A fresh box and a long-lived box converge, and a non-Vultr Debian/Ubuntu host works with `make deploy DEPLOY_HOST=… LAWN_DOMAIN=…`.
+- **Cloud-init writes the `deploy/` files verbatim (`file()` + `indent()`) and then runs host-setup.** There's no shell escaping inside the template, and the files are byte-identical to the repo.
+- **`/etc/lawn/env` is written 0600 by cloud-init, then chowned root:lawn 0640 by host-setup; it's never overwritten.** `write_files` runs before the user exists. On non-OpenTofu hosts only, host-setup generates a secret if the file is missing.
+- **Caddyfile uses `{$LAWN_DOMAIN}` from `/etc/lawn/caddy.env` via a drop-in.** One Caddyfile everywhere.
+- **Caddy: `flush_interval -1`, no `encode`, no access log, no write timeout, HTTP/3 off.** Drips must stream unbuffered for 10 min; the app already logs everything; the firewall opens TCP only.
+- **Firewall also allows ICMP from anywhere.** Ping and IPv6 path-MTU discovery need it.
+- **The OS image is looked up by name ("Debian 12 x64 (bookworm)") with an `os_id` override; the plan defaults to `vc2-2c-2gb`.** This avoids hard-coded ids.
+- **`lifecycle.ignore_changes = [user_data, os_id]`.** After first boot, deploys own the host; editing `deploy/` must not rebuild the box.
+- **The DNS zone is created without `ip`, and explicit A/AAAA records (TTL 300) are made for apex and www.** No duplicate default records.
+- **`.terraform.lock.hcl` is not committed.** The sandbox's local mirror only records linux_amd64 hashes, which would break `tofu init` on macOS.
+- **Deploy is a tarball over one ssh connection; host keys use `accept-new`, or strict checking with `SSH_KNOWN_HOSTS`.** No rsync dependency.
+- **`/etc/lawn/config.yaml` is created once and never overwritten; the latest example goes to `config.example.yaml` beside it.** Operator edits survive deploys; `crawlers.yaml` is always replaced.
+- **The binary swap is install-to-temp + `mv`; the previous binary is kept as `lawn.prev` and restored if the health check fails.** Deploys are safe to re-run.
+- **`lawn.service` hardening goes beyond the brief:** `MemoryHigh=900M`, `MemoryMax=1200M`, `SystemCallFilter=@system-service`, `MemoryDenyWriteExecute`, and `IPAddressDeny=169.254.0.0/16`, which blocks the metadata endpoint that holds user-data and so the secret. `ConditionPathExists` on the binary and config keeps boot from loop-failing before the first deploy.
+- **Backups: `VACUUM INTO` a temp file, `PRAGMA quick_check`, rename; keep the newest 7.** Re-running the same day is safe.
+- **The ASN refresh requires ≥ 1 MB, `gzip -t`, and a 5-field first line, and skips unchanged files; then `try-reload-or-restart lawn`.** A bad download can never replace a good table.
+- **unattended-upgrades covers security updates plus Caddy's repo, auto-rebooting at 04:30 UTC when needed.** A brief drip interruption is fine for a tarpit.
+- **journald: 200 MB cap, 1 month retention; sysctls raise somaxconn/backlog to 8192 and widen the port range.** Sized for thousands of slow sockets on a 2 GB box.
+- **CI calls the Makefile targets; actions are pinned to major tags; `deploy.yml` uses a `production` environment and runs `make test` first.** Local and CI behaviour stay identical.

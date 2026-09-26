@@ -165,11 +165,13 @@ func Load(path string, getenv func(string) string) (Config, error) {
 			c.Secret = []byte(s)
 		}
 	}
-	return c, c.finish()
+	return c, c.Validate()
 }
 
-func (c *Config) finish() error {
-	c.Proxies = c.Proxies[:0]
+// Validate parses TrustedProxies into Proxies and checks invariants. Load
+// calls it; call it yourself after building a Config by hand.
+func (c *Config) Validate() error {
+	c.Proxies = nil
 	for _, p := range c.TrustedProxies {
 		p = strings.TrimSpace(p)
 		if p == "" {

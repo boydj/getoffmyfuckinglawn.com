@@ -25,3 +25,4 @@ crash.log
 .env
 *.pem
 id_*
+infra/.terraform.lock.hcl

@@ -72,7 +72,7 @@ type Deps struct {
 	Limiter   Limiter
 	Egress    Egress
 	Logger    Logger
-	Observer  Observer // may be nil
+	Observer  Observer  // may be nil
 	ASN       ASNLookup // may be nil; replace later with SetASN
 	Trusted   []netip.Prefix
 	PublicDir string

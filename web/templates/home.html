@@ -5,32 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Get off my lawn — a tarpit for AI scrapers that ignore robots.txt</title>
 <meta name="description" content="A tarpit for crawlers that ignore robots.txt, and a factual wall of shame for the ones that fall in.">
-<style>
-:root{--bg:#fbfaf6;--fg:#1d1d1b;--mut:#5f5d57;--acc:#2f6b2f;--rule:#d9d6cc;--code:#f0eee6}
-@media (prefers-color-scheme:dark){:root{--bg:#141612;--fg:#e8e6df;--mut:#a3a098;--acc:#8fce7f;--rule:#34372f;--code:#1f221c}}
-*{box-sizing:border-box}
-body{margin:0 auto;max-width:44rem;padding:1.5rem 1rem 3rem;background:var(--bg);color:var(--fg);font:17px/1.55 Georgia,"Iowan Old Style",serif}
-h1{font-size:2rem;line-height:1.15;margin:.5rem 0 1rem}
-h2{font-size:1.25rem;margin:2.2rem 0 .6rem;border-bottom:1px solid var(--rule);padding-bottom:.2rem}
-a{color:var(--acc)}
-pre,code{font:14px/1.4 ui-monospace,Menlo,Consolas,monospace;background:var(--code)}
-pre{padding:.75rem;overflow-x:auto;border:1px solid var(--rule)}
-.lede{font-size:1.15rem;color:var(--mut)}
-.cta{display:inline-block;margin:.5rem 0;padding:.45rem .8rem;border:2px solid var(--acc);text-decoration:none;font-weight:bold}
-.grass{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
-footer{margin-top:3rem;border-top:1px solid var(--rule);padding-top:1rem;color:var(--mut);font-size:.9rem}
-dt{font-weight:bold;margin-top:.6rem}
-dd{margin-left:1rem}
-</style>
+{{template "style"}}
 </head>
 <body>
+<main class="prose">
 <header>
 <h1>Get off my lawn.</h1>
 <p class="lede">This site has exactly one rule, and it is written down in <a href="/robots.txt">/robots.txt</a>: stay out of <code>/lawn/</code>. Crawlers that read the rule and walk in anyway get an endless garden of pointless pages, served one small chunk at a time. Then they get their name on the wall.</p>
 <p><a class="cta" href="/shame/">See the wall of shame →</a></p>
 </header>
 
-<main>
 <h2>What is this?</h2>
 <p>A tarpit. Everything under <code>/lawn/</code> is a maze of generated pages. Each page is stitched together from a word-level Markov chain trained on a few public-domain novels, links to between ten and twenty deeper pages, and is sent at roughly sixteen bytes per second. There is no bottom. A crawler that follows the links can spend minutes per page and never run out.</p>
 <p>Well-behaved crawlers never see any of it. Search engines and AI crawlers that honour <code>robots.txt</code> are never trapped, never logged as violators, and never shamed. If you are a person who clicked something odd, nothing bad happened: go have a sandwich.</p>
@@ -67,15 +51,11 @@ dd{margin-left:1rem}
 <p>The fix is one line of code you already wrote: read <code>robots.txt</code>, then do what it says.</p>
 </main>
 
-<div class="grass" aria-hidden="true">
+<div class="bait" aria-hidden="true">
 {{range .Bait}}<a href="{{.}}" rel="nofollow" tabindex="-1">more lawn</a>
 {{end}}</div>
 
-<footer>
-<p>The <code>robots.txt</code> in effect on this site, verbatim:</p>
-<pre>{{.RobotsTxt}}</pre>
-<p><a href="/#methodology">Methodology</a> · <a href="/shame/">Wall of shame</a> · No JavaScript, no analytics, no third-party anything.</p>
-</footer>
+{{template "footer" .RobotsTxt}}
 </body>
 </html>
 {{end}}
