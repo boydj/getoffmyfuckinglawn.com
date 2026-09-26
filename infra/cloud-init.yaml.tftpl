@@ -1,0 +1,43 @@
+#cloud-config
+# Rendered by OpenTofu (infra/main.tf). Runs once, on first boot.
+#
+# Files come from deploy/ verbatim (YAML literal blocks); deploy/host-setup.sh
+# then does the provisioning, the same script every `make deploy` re-runs.
+
+ssh_pwauth: false
+disable_root: false
+
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - sqlite3
+  - unattended-upgrades
+
+write_files:
+  # Secret for the maze HMAC. host-setup.sh re-owns it root:lawn 0640 once the
+  # lawn user exists; deploys never touch it.
+  - path: /etc/lawn/env
+    owner: root:root
+    permissions: "0600"
+    encoding: b64
+    content: ${base64encode("LAWN_SECRET=${lawn_secret}\n")}
+  - path: /etc/lawn/caddy.env
+    owner: root:root
+    permissions: "0644"
+    content: |
+      LAWN_DOMAIN=${domain}
+%{ for f in files ~}
+  - path: ${f.path}
+    owner: root:root
+    permissions: "${f.mode}"
+    content: |
+      ${indent(6, f.content)}
+%{ endfor ~}
+
+runcmd:
+  - [bash, /usr/local/lib/lawn/host-setup.sh]
+
+final_message: "lawn host bootstrapped after $UPTIME s; ship the app with: make deploy"

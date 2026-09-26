@@ -1,0 +1,34 @@
+{{define "shame-head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>{{.}}</title>
+{{template "style"}}
+</head>
+<body>
+<main>{{end}}
+
+{{define "shame-badge"}}<span class="b b-{{statusClass .}}">{{statusLabel .}}</span>{{end}}
+
+{{define "shame-legend"}}<dl>
+<dt>{{template "shame-badge" "verified"}}</dt><dd>User agent matched a known crawler and the source address passed that vendor's published verification (reverse DNS or published IP ranges). Only these rows show individual IPs.</dd>
+<dt>{{template "shame-badge" "spoofed"}}</dt><dd>User agent claimed a known crawler, but the source address failed that vendor's published verification. Grouped by the claimed name and the network the requests actually came from.</dd>
+<dt>{{template "shame-badge" "unverifiable"}}</dt><dd>User agent claims a known crawler whose vendor publishes no verification method we could find. Not confirmed; attributed by network.</dd>
+<dt>{{template "shame-badge" "anonymous"}}</dt><dd>No known crawler user agent. Attributed only to the network (ASN) the requests came from.</dd>
+</dl>
+<p class="note">Networks other than verified crawlers are shown as a /24 (IPv4) or /48 (IPv6) at most. Hours held = total time our server spent serving disallowed pages to them. Pages = disallowed fetches. Sessions = runs of requests with gaps under {{gap}}.</p>{{end}}
+
+{{define "shame-rows-head"}}<tr><th>{{.}}</th><th class="l">Status</th><th>Hours 24h</th><th>Hours 7d</th><th>Hours 30d</th><th>Hours all</th><th>Pages</th><th>Max depth</th><th>Bytes</th><th>Sessions</th><th>First seen</th><th>Last seen</th></tr>{{end}}
+
+{{define "shame-row"}}<tr><td class="w"><a href="{{.Prefix}}{{.G.Slug}}/">{{trunc .G.Name 80}}</a>{{with .G.Sub}}<br><small>{{trunc . 80}}</small>{{end}}</td><td class="l">{{range .G.Statuses}}{{template "shame-badge" .}}{{end}}</td>{{range .G.W}}<td>{{hours .HeldMs}}</td>{{end}}{{with .G.All}}<td>{{.Pages}}</td><td>{{.MaxDepth}}</td><td>{{bytes .Bytes}}</td><td>{{.Sessions}}</td><td>{{when .FirstSeen}}</td><td>{{when .LastSeen}}</td>{{end}}</tr>{{end}}
+
+{{define "shame-table"}}{{if .Rows}}<div class="tw"><table>
+<thead>{{template "shame-rows-head" .Heading}}</thead>
+<tbody>
+{{range .Rows}}{{template "shame-row" .}}
+{{end}}</tbody>
+</table></div>
+{{if gt .Total (len .Rows)}}<p class="note">Showing the top {{len .Rows}} of {{.Total}}, by all-time hours held. The full list is in <a href="{{.Feed}}">feed.json</a>.</p>{{end}}
+{{else}}<p class="note">Nobody here yet.</p>{{end}}{{end}}

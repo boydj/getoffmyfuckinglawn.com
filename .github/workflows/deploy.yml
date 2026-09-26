@@ -1,0 +1,69 @@
+name: deploy
+
+# Manual only. Needs repository (or "production" environment) secrets:
+#   SSH_PRIVATE_KEY  private key whose public half is on the host (root)
+#   DEPLOY_HOST      host IP or name, e.g. `tofu -chdir=infra output -raw ipv4`
+#   SSH_KNOWN_HOSTS  optional but recommended: the host's known_hosts line(s),
+#                    e.g. `ssh-keyscan <ip>` run once from a trusted machine.
+#                    Without it the key is fetched with ssh-keyscan on every
+#                    run (trust on first use) and a warning is emitted.
+# Optional repository variable:
+#   LAWN_DOMAIN      only needed if the host's /etc/lawn/caddy.env should change.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Test before shipping
+        run: make test
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SSH_PRIVATE_KEY" ] || [ -z "$DEPLOY_HOST" ]; then
+            echo "::error::SSH_PRIVATE_KEY and DEPLOY_HOST secrets are required"
+            exit 1
+          fi
+          dir="$RUNNER_TEMP/ssh"
+          install -d -m 0700 "$dir"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$dir/id"
+          chmod 0600 "$dir/id"
+          if [ -n "$SSH_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" > "$dir/known_hosts"
+          else
+            echo "::warning::SSH_KNOWN_HOSTS secret is not set; trusting whatever host key ssh-keyscan returns now. Set SSH_KNOWN_HOSTS to pin the host key."
+            ssh-keyscan -T 15 "$DEPLOY_HOST" > "$dir/known_hosts"
+          fi
+          test -s "$dir/known_hosts"
+          echo "SSH_KEY=$dir/id" >> "$GITHUB_ENV"
+          echo "SSH_KNOWN_HOSTS=$dir/known_hosts" >> "$GITHUB_ENV"
+
+      - name: make deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          LAWN_DOMAIN: ${{ vars.LAWN_DOMAIN }}
+        run: make deploy
+
+      - name: Remove key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/ssh"

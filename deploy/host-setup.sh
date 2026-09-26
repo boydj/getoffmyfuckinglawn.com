@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# Idempotent base provisioning for a lawn host (Debian 12; also works on
+# Ubuntu 22.04+). Run as root by cloud-init on first boot and by
+# deploy/install.sh on every deploy, so a plain Debian box without OpenTofu
+# can be brought up with `make deploy` alone.
+#
+# Expects the systemd units already in /etc/systemd/system and asn-refresh.sh,
+# backup.sh and Caddyfile in /usr/local/lib/lawn.
+#
+# Env:
+#   LAWN_DOMAIN  site domain; written to /etc/lawn/caddy.env when set. Required
+#                on the first run unless that file already exists.
+set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+	echo "host-setup: must run as root" >&2
+	exit 1
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+export HOME="${HOME:-/root}"
+LIB=/usr/local/lib/lawn
+LAWN_DOMAIN="${LAWN_DOMAIN:-}"
+
+log() { echo "host-setup: $*"; }
+
+# write_if_changed DEST MODE: write stdin to DEST (atomically) only when the
+# content differs. Returns 0 if the file changed, 1 if it was already current.
+write_if_changed() {
+	local dest="$1" mode="$2" tmp
+	tmp="$(mktemp -- "$(dirname -- "$dest")/.tmp.XXXXXX")"
+	cat >"$tmp"
+	if [ -f "$dest" ] && cmp -s -- "$tmp" "$dest"; then
+		rm -f -- "$tmp"
+		chmod "$mode" -- "$dest"
+		return 1
+	fi
+	chmod "$mode" -- "$tmp"
+	mv -f -- "$tmp" "$dest"
+	log "wrote $dest"
+	return 0
+}
+
+installed() {
+	[ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null || true)" = "install ok installed" ]
+}
+
+# ---------------------------------------------------------------- packages
+pkgs=(ca-certificates curl gnupg sqlite3 unattended-upgrades)
+missing=()
+for p in "${pkgs[@]}"; do
+	installed "$p" || missing+=("$p")
+done
+if [ "${#missing[@]}" -gt 0 ]; then
+	log "installing ${missing[*]}"
+	apt-get update -q
+	apt-get install -y -q --no-install-recommends "${missing[@]}"
+fi
+
+# ------------------------------------------------------------------- caddy
+# Official Caddy apt repository (https://caddyserver.com/docs/install).
+keyring=/usr/share/keyrings/caddy-stable-archive-keyring.gpg
+srclist=/etc/apt/sources.list.d/caddy-stable.list
+if [ ! -s "$keyring" ]; then
+	log "adding Caddy apt signing key"
+	tmpkey="$(mktemp)"
+	curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' -o "$tmpkey"
+	gpg --batch --yes --dearmor -o "$keyring" "$tmpkey"
+	rm -f -- "$tmpkey"
+	chmod o+r "$keyring"
+fi
+if [ ! -s "$srclist" ]; then
+	log "adding Caddy apt repository"
+	tmplist="$(mktemp)"
+	curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' -o "$tmplist"
+	grep -q '^deb ' "$tmplist" || { echo "host-setup: unexpected Caddy repo list" >&2; exit 1; }
+	install -m 0644 "$tmplist" "$srclist"
+	rm -f -- "$tmplist"
+fi
+if ! installed caddy; then
+	log "installing caddy"
+	apt-get update -q
+	apt-get install -y -q caddy
+fi
+
+# ---------------------------------------------------- user and directories
+if ! getent passwd lawn >/dev/null; then
+	log "creating system user lawn"
+	useradd --system --user-group --home-dir /var/lib/lawn --no-create-home \
+		--shell /usr/sbin/nologin --comment "lawn tarpit" lawn
+fi
+
+install -d -m 0750 -o root -g lawn /etc/lawn
+install -d -m 0755 -o root -g root /opt/lawn /opt/lawn/corpus /opt/lawn/templates "$LIB"
+install -d -m 0750 -o lawn -g lawn /var/lib/lawn \
+	/var/lib/lawn/public /var/lib/lawn/ranges /var/lib/lawn/backups
+
+# ------------------------------------------------------------------ secret
+# /etc/lawn/env is normally written by cloud-init from OpenTofu's
+# random_password. On a host provisioned some other way, generate one here.
+# Never overwritten once present.
+envf=/etc/lawn/env
+if [ ! -e "$envf" ]; then
+	log "no $envf; generating a new LAWN_SECRET"
+	(umask 077; printf 'LAWN_SECRET=%s\n' "$(head -c 36 /dev/urandom | base64 | tr -d '\n/+=')" >"$envf")
+fi
+if ! grep -Eq '^LAWN_SECRET=.{16,}$' "$envf"; then
+	echo "host-setup: $envf exists but has no LAWN_SECRET of >= 16 chars; fix it by hand" >&2
+	exit 1
+fi
+chown root:lawn "$envf"
+chmod 0640 "$envf"
+
+# ------------------------------------------------------------ caddy config
+caddyenv=/etc/lawn/caddy.env
+if [ -n "$LAWN_DOMAIN" ]; then
+	if ! printf '%s' "$LAWN_DOMAIN" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'; then
+		echo "host-setup: invalid LAWN_DOMAIN: $LAWN_DOMAIN" >&2
+		exit 1
+	fi
+	printf 'LAWN_DOMAIN=%s\n' "$LAWN_DOMAIN" | write_if_changed "$caddyenv" 0644 || true
+fi
+if [ ! -s "$caddyenv" ]; then
+	echo "host-setup: $caddyenv missing; run with LAWN_DOMAIN=example.com" >&2
+	exit 1
+fi
+
+install -d -m 0755 /etc/systemd/system/caddy.service.d
+write_if_changed /etc/systemd/system/caddy.service.d/lawn.conf 0644 <<'UNIT' || true
+# Managed by lawn host-setup.sh: gives the Caddyfile its {$LAWN_DOMAIN}.
+[Service]
+EnvironmentFile=/etc/lawn/caddy.env
+UNIT
+
+if [ -f "$LIB/Caddyfile" ]; then
+	# shellcheck disable=SC1090
+	(set -a; . "$caddyenv"; set +a; caddy validate --config "$LIB/Caddyfile" --adapter caddyfile >/dev/null)
+	write_if_changed /etc/caddy/Caddyfile 0644 <"$LIB/Caddyfile" || true
+fi
+
+# ------------------------------------------------------------ kernel knobs
+if write_if_changed /etc/sysctl.d/60-lawn.conf 0644 <<'SYSCTL'; then
+# Managed by lawn host-setup.sh: many long-lived slow connections.
+net.core.somaxconn = 8192
+net.core.netdev_max_backlog = 8192
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_syncookies = 1
+net.ipv4.ip_local_port_range = 10240 65535
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+fs.file-max = 1048576
+SYSCTL
+	sysctl -q -p /etc/sysctl.d/60-lawn.conf
+fi
+
+# ----------------------------------------------------------------- journald
+install -d -m 0755 /etc/systemd/journald.conf.d
+if write_if_changed /etc/systemd/journald.conf.d/60-lawn.conf 0644 <<'JOURNAL'; then
+# Managed by lawn host-setup.sh: cap journal size on a small disk.
+[Journal]
+Storage=persistent
+SystemMaxUse=200M
+SystemKeepFree=1G
+SystemMaxFileSize=25M
+RuntimeMaxUse=50M
+MaxRetentionSec=1month
+JOURNAL
+	systemctl restart systemd-journald
+fi
+
+# ------------------------------------------------------ unattended-upgrades
+write_if_changed /etc/apt/apt.conf.d/20auto-upgrades 0644 <<'APT' || true
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+APT
+write_if_changed /etc/apt/apt.conf.d/52lawn-unattended-upgrades 0644 <<'APT' || true
+// Managed by lawn host-setup.sh. Appends to the distro's default origins
+// (security updates) in 50unattended-upgrades.
+Unattended-Upgrade::Origins-Pattern {
+	// Caddy from its official Cloudsmith repository.
+	"site=dl.cloudsmith.io";
+};
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+APT
+systemctl enable --quiet unattended-upgrades.service 2>/dev/null || true
+
+# ------------------------------------------------------------------ systemd
+systemctl daemon-reload
+# lawn.service is ConditionPathExists-gated on the binary, so enabling it
+# before the first deploy is harmless.
+systemctl enable --quiet lawn.service
+systemctl enable --quiet --now lawn-asn-refresh.timer lawn-verify-refresh.timer lawn-backup.timer
+systemctl enable --quiet caddy.service
+if systemctl is-active --quiet caddy.service; then
+	systemctl reload caddy.service
+else
+	systemctl start caddy.service
+fi
+
+# ------------------------------------------------------------- ASN dataset
+if [ ! -s /var/lib/lawn/ip2asn-combined.tsv.gz ]; then
+	log "fetching initial ASN dataset"
+	systemctl start lawn-asn-refresh.service || log "WARNING: initial ASN download failed; the weekly timer will retry (or: systemctl start lawn-asn-refresh)"
+fi
+
+log "done"

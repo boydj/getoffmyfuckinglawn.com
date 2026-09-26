@@ -1,0 +1,29 @@
+# Nightly SQLite backup (VACUUM INTO) with 7-day rotation.
+[Unit]
+Description=lawn: nightly SQLite backup
+ConditionPathExists=/var/lib/lawn/lawn.db
+
+[Service]
+Type=oneshot
+User=lawn
+Group=lawn
+ExecStart=/usr/local/lib/lawn/backup.sh
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=1h
+
+UMask=0027
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lawn
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes

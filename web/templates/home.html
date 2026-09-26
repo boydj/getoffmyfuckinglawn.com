@@ -1,0 +1,61 @@
+{{define "home"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get off my lawn — a tarpit for AI scrapers that ignore robots.txt</title>
+<meta name="description" content="A tarpit for crawlers that ignore robots.txt, and a factual wall of shame for the ones that fall in.">
+{{template "style"}}
+</head>
+<body>
+<main class="prose">
+<header>
+<h1>Get off my lawn.</h1>
+<p class="lede">This site has exactly one rule, and it is written down in <a href="/robots.txt">/robots.txt</a>: stay out of <code>/lawn/</code>. Crawlers that read the rule and walk in anyway get an endless garden of pointless pages, served one small chunk at a time. Then they get their name on the wall.</p>
+<p><a class="cta" href="/shame/">See the wall of shame →</a></p>
+</header>
+
+<h2>What is this?</h2>
+<p>A tarpit. Everything under <code>/lawn/</code> is a maze of generated pages. Each page is stitched together from a word-level Markov chain trained on a few public-domain novels, links to between ten and twenty deeper pages, and is sent at roughly sixteen bytes per second. There is no bottom. A crawler that follows the links can spend minutes per page and never run out.</p>
+<p>Well-behaved crawlers never see any of it. Search engines and AI crawlers that honour <code>robots.txt</code> are never trapped, never logged as violators, and never shamed. If you are a person who clicked something odd, nothing bad happened: go have a sandwich.</p>
+
+<h2 id="methodology">Methodology</h2>
+<dl>
+<dt>What counts as a violation</dt>
+<dd>A request for any path under <code>/lawn/</code>. That prefix is disallowed for every user agent in the <code>robots.txt</code> shown at the bottom of this page, and has been since the site launched. Nothing else counts.</dd>
+<dt>How visitors reach the lawn</dt>
+<dd>Only through links a human would never follow: entries in <code>/sitemap.xml</code> and links on this page that are hidden from view and from screen readers and marked <code>rel="nofollow"</code>. Every one of them points into the disallowed prefix.</dd>
+<dt>What is logged</dt>
+<dd>Every request to every route: time, client IP, origin ASN (from the public <a href="https://iptoasn.com/">iptoasn.com</a> dataset), user-agent string, path, maze depth, bytes sent, and how long the connection was held.</dd>
+<dt>How crawlers are identified</dt>
+<dd>User-agent strings are matched against a list of known crawlers. Where the vendor publishes an official verification method, we use it: reverse DNS with a forward-confirming lookup, or the vendor's published IP ranges. The result is one of four labels:
+<ul>
+<li><strong>verified</strong>: the user agent claims a crawler and the vendor's own verification method confirms it.</li>
+<li><strong>spoofed UA</strong>: the user agent claims a crawler but the vendor's verification method says the request did not come from them. We show who it really came from (by ASN), not who it claimed to be.</li>
+<li><strong>claimed, unverifiable</strong>: the user agent claims a crawler whose vendor publishes no verification method. We show the claim, and we do not treat it as confirmed.</li>
+<li><strong>anonymous</strong>: no known crawler claimed. Attributed only to the network (ASN) it came from.</li>
+</ul></dd>
+<dt>Time held</dt>
+<dd>For each request, the time between the first byte of the request and the end of our response (or the client hanging up). Sessions are runs of requests from the same IP and user agent with gaps of less than ten minutes.</dd>
+<dt>"Read the rules, ignored them"</dt>
+<dd>Within one session, the client fetched <code>/robots.txt</code> before its first request into <code>/lawn/</code>.</dd>
+<dt>What is published</dt>
+<dd>Only facts: organisation or network, user-agent string, number of disallowed fetches, and time held. We make no claims about anyone's intent. Individual IP addresses are published only for <em>verified</em> crawlers, which run from the vendor's own published infrastructure. Everything else is shown at most as a /24 (IPv4) or /48 (IPv6) network plus its ASN, so no individual residential address is ever published.</dd>
+<dt>Machine-readable data</dt>
+<dd><a href="/shame/feed.json">/shame/feed.json</a> (all offenders) and <a href="/shame/blocklist.txt">/shame/blocklist.txt</a> (CIDRs of verified crawlers plus spoofers above a violation threshold).</dd>
+<dt>Corrections</dt>
+<dd>If you run a crawler listed here and believe the classification is wrong, publish an official verification method (reverse DNS or an IP range list) and it will be used.</dd>
+</dl>
+
+<h2>For crawler operators</h2>
+<p>The fix is one line of code you already wrote: read <code>robots.txt</code>, then do what it says.</p>
+</main>
+
+<div class="bait" aria-hidden="true">
+{{range .Bait}}<a href="{{.}}" rel="nofollow" tabindex="-1">more lawn</a>
+{{end}}</div>
+
+{{template "footer" .RobotsTxt}}
+</body>
+</html>
+{{end}}

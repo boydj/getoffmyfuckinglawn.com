@@ -1,0 +1,28 @@
+# build output
+/bin/
+/dist/
+/lawn
+
+# runtime data — never commit
+*.db
+*.db-wal
+*.db-shm
+*.tsv
+*.tsv.gz
+/public/
+/data/
+
+# OpenTofu
+infra/.terraform/
+infra/.terraform.lock.hcl.bak
+*.tfstate
+*.tfstate.*
+*.tfplan
+infra/terraform.tfvars
+crash.log
+
+# secrets
+.env
+*.pem
+id_*
+infra/.terraform.lock.hcl

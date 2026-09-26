@@ -1,0 +1,41 @@
+# Daily: refresh vendor IP-range lists and re-verify stale identities.
+[Unit]
+Description=lawn: refresh crawler IP ranges and re-verify identities
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/usr/local/bin/lawn
+ConditionPathExists=/etc/lawn/config.yaml
+
+[Service]
+Type=oneshot
+User=lawn
+Group=lawn
+WorkingDirectory=/opt/lawn
+EnvironmentFile=/etc/lawn/env
+ExecStart=/usr/local/bin/lawn verify-refresh -config /etc/lawn/config.yaml
+# Let the running server pick up the refreshed range cache (SIGHUP); no-op
+# when lawn is not running.
+ExecStartPost=+/bin/systemctl try-reload-or-restart lawn.service
+Nice=10
+TimeoutStartSec=30min
+
+UMask=0027
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lawn
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+IPAddressDeny=169.254.0.0/16

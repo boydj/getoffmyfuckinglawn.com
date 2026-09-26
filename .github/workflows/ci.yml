@@ -1,0 +1,74 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: vet, staticcheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+
+      - name: go vet + staticcheck
+        run: make vet
+
+      - name: Test (unit + integration, race detector)
+        run: make test
+
+      - name: Build linux/amd64
+        run: make build-linux
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: lawn-linux-amd64
+          path: dist/lawn
+          if-no-files-found: error
+          retention-days: 14
+
+  shell:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # shellcheck is preinstalled on GitHub's Ubuntu runners.
+      - run: shellcheck -x deploy/*.sh
+
+  infra:
+    name: tofu fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_wrapper: false
+
+      - name: tofu fmt
+        run: tofu -chdir=infra fmt -check -recursive
+
+      - name: tofu init (no backend, no credentials)
+        run: tofu -chdir=infra init -backend=false -input=false
+
+      - name: tofu validate
+        run: tofu -chdir=infra validate

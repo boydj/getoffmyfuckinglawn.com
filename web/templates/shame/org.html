@@ -1,0 +1,56 @@
+{{define "shame-org"}}{{template "shame-head" .Title}}
+<p><a href="../../">&larr; Wall of Shame</a></p>
+<h1>{{trunc .G.Name 100}}</h1>
+<p>{{range .G.Statuses}}{{template "shame-badge" .}}{{end}}{{with .G.Sub}} <small>{{.}}</small>{{end}}</p>
+<p class="lede">{{.Note}}</p>
+{{with .ASNs}}<p class="note">Networks seen: {{range $i, $a := .}}{{if $i}}, {{end}}{{$a.Label}}{{end}}{{if gt $.ASNTotal (len .)}} and {{sub $.ASNTotal (len .)}} more{{end}}.</p>{{end}}
+
+<h2>Totals by window</h2>
+<div class="tw"><table>
+<thead><tr><th>Window</th><th>Hours held</th><th>Pages</th><th>Max depth</th><th>Bytes</th><th>Sessions</th><th>Read the rules</th><th>First seen</th><th>Last seen</th></tr></thead>
+<tbody>{{range .Windows}}<tr><td>{{.Name}}</td><td>{{hours .M.HeldMs}}</td><td>{{.M.Pages}}</td><td>{{.M.MaxDepth}}</td><td>{{bytes .M.Bytes}}</td><td>{{.M.Sessions}}</td><td>{{.M.ReadRules}}</td><td>{{when .M.FirstSeen}}</td><td>{{when .M.LastSeen}}</td></tr>
+{{end}}</tbody>
+</table></div>
+<p class="note">"Read the rules" counts sessions that fetched robots.txt before their first disallowed page.</p>
+
+{{if .Members}}<h2>By identity</h2>
+<div class="tw"><table>
+<thead><tr><th>Name</th><th class="l">Status</th><th>Hours all</th><th>Pages</th><th>Max depth</th><th>Sessions</th><th>Last seen</th></tr></thead>
+<tbody>{{range .Members}}<tr><td class="w">{{if eq .Kind "anonymous"}}(no known crawler UA){{else}}<a href="../{{.Slug}}/">{{trunc .Name 80}}</a>{{end}}</td><td class="l">{{template "shame-badge" .Kind}}</td>{{with .All}}<td>{{hours .HeldMs}}</td><td>{{.Pages}}</td><td>{{.MaxDepth}}</td><td>{{.Sessions}}</td><td>{{when .LastSeen}}</td>{{end}}</tr>
+{{end}}</tbody>
+</table></div>
+{{if gt .MemberTotal (len .Members)}}<p class="note">Showing {{len .Members}} of {{.MemberTotal}}.</p>{{end}}{{end}}
+
+<h2>Daily</h2>
+{{with .Spark}}<svg viewBox="0 0 {{.W}} {{.H}}" width="{{.W}}" height="{{.H}}" role="img" aria-label="Disallowed pages per day, last {{.Days}} days"><polyline fill="none" stroke="currentColor" stroke-width="1.5" points="{{.Points}}"/></svg>
+<p class="note">Pages per day, last {{.Days}} days (peak {{.Peak}}).</p>{{end}}
+{{if .Daily}}<div class="tw"><table>
+<thead><tr><th>Day (UTC)</th><th>Pages</th><th>Hours held</th><th>Bytes</th><th>Sessions</th></tr></thead>
+<tbody>{{range .Daily}}<tr><td>{{.Date}}</td><td>{{.Pages}}</td><td>{{hours .HeldMs}}</td><td>{{bytes .Bytes}}</td><td>{{.Sessions}}</td></tr>
+{{end}}</tbody>
+</table></div>
+{{if gt .DailyTotal (len .Daily)}}<p class="note">Most recent {{len .Daily}} of {{.DailyTotal}} days.</p>{{end}}{{end}}
+
+<h2>Top user agents</h2>
+{{if .UAs}}<div class="tw"><table>
+<thead><tr><th>User agent</th><th>Pages</th></tr></thead>
+<tbody>{{range .UAs}}<tr><td class="w"><code>{{if .UA}}{{trunc .UA $.UALen}}{{else}}(empty){{end}}</code></td><td>{{.Pages}}</td></tr>
+{{end}}</tbody>
+</table></div>
+{{if gt .UATotal (len .UAs)}}<p class="note">Top {{len .UAs}} of {{.UATotal}}.</p>{{end}}{{end}}
+
+<h2>Networks</h2>
+<p class="note">{{.CIDRNote}}</p>
+{{if .CIDRs}}<p><code>{{range $i, $c := .CIDRs}}{{if $i}} {{end}}{{$c}}{{end}}</code></p>
+{{if gt .CIDRTotal (len .CIDRs)}}<p class="note">{{len .CIDRs}} of {{.CIDRTotal}} shown; all are in <a href="../../feed.json">feed.json</a>.</p>{{end}}{{end}}
+
+{{if .Paths}}<h2>Sample paths</h2>
+<p class="note">Recent disallowed URLs fetched, most recent first.</p>
+<ul>{{range .Paths}}<li><code>{{.}}</code></li>{{end}}</ul>{{end}}
+
+<p class="note">Generated {{.Generated}}.</p>
+</main>
+{{template "footer" .RobotsTxt}}
+</body>
+</html>
+{{end}}
