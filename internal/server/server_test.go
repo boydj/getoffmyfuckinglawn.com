@@ -233,8 +233,11 @@ func TestMazeOverLimitServesFast(t *testing.T) {
 		t.Fatalf("code=%d fasts=%d drips=%d", w.Code, r.drip.fasts, r.drip.drips)
 	}
 	rec := r.log.reqs[0]
-	if rec.Dripped || !rec.IsViolation || rec.BytesSent != int64(w.Body.Len()) {
+	if rec.Dripped || !rec.IsViolation || rec.BytesSent != int64(w.Body.Len()) || rec.Depth != 0 {
 		t.Fatalf("rec %+v", rec)
+	}
+	if !strings.Contains(w.Body.String(), "full") || len(w.Body.String()) > 200 {
+		t.Errorf("shed page should be small and static: %q", w.Body.String())
 	}
 	if w.Header().Get("Content-Length") == "" {
 		t.Error("fast path should set Content-Length")

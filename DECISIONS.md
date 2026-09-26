@@ -102,3 +102,9 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **unattended-upgrades covers security updates plus Caddy's repo, auto-rebooting at 04:30 UTC when needed.** A brief drip interruption is fine for a tarpit.
 - **journald: 200 MB cap, 1 month retention; sysctls raise somaxconn/backlog to 8192 and widen the port range.** Sized for thousands of slow sockets on a 2 GB box.
 - **CI calls the Makefile targets; actions are pinned to major tags; `deploy.yml` uses a `production` environment and runs `make test` first.** Local and CI behaviour stay identical.
+
+## Integration follow-ups (lead)
+
+- **Over-limit `/lawn/*` requests get a tiny static "lawn is full" page (≈80 B, no links, no render) instead of the full maze page.** §5.3 says "fast, small". In a 6000-vs-5000-cap load test this cut box CPU from 49% to 37.5% and bytes sent from 975 MB to 22 MB, while serving more shed requests.
+- **HEAD on `/lawn/*` no longer renders the page, so it carries no Content-Length.** HEAD is never dripped, and rendering only to count bytes wasted CPU.
+- **The draft `deploy/README.md` was folded into the top-level README.** One place for setup/deploy/teardown docs.

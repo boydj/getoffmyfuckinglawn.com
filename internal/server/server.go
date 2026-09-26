@@ -119,6 +119,9 @@ func (s *Server) lookupASN(a netip.Addr) (uint32, string) {
 	return asn, org
 }
 
+// shedPage is served for /lawn/* when a connection cap is hit.
+var shedPage = []byte("<!doctype html><title>busy</title><p>The lawn is full. Try again later.</p>\n")
+
 // egressCapPage is served for /lawn/* once the daily egress cap is hit.
 var egressCapPage = []byte("<!doctype html><title>closed</title><p>The lawn is closed for today.</p>\n")
 
@@ -219,24 +222,25 @@ func (s *Server) serveMaze(w http.ResponseWriter, r *http.Request, ip netip.Addr
 		return s.writeSmall(w, http.StatusOK, "text/html; charset=utf-8", egressCapPage, r), false
 	}
 
-	buf := maze.GetBuffer()
-	defer maze.PutBuffer(buf)
-	s.d.Pages.Render(buf, r.URL.Path)
-	body := buf.Bytes()
-
 	if r.Method == http.MethodHead {
-		h.Set("Content-Length", strconv.Itoa(len(body)))
 		w.WriteHeader(http.StatusOK)
 		return 0, false
 	}
 	if !ip.IsValid() || !s.d.Limiter.Acquire(ip, asn) {
+		// Load shedding: a tiny static page, no render, no drip (SPEC.md
+		// 5.3 "fast, small"). Still a logged violation, never a 5xx.
 		s.Metrics.LimitShed.Add(1)
-		h.Set("Content-Length", strconv.Itoa(len(body)))
+		h.Set("Content-Length", strconv.Itoa(len(shedPage)))
 		w.WriteHeader(http.StatusOK)
-		n, _ := s.d.Dripper.Fast(w, body)
+		n, _ := s.d.Dripper.Fast(w, shedPage)
 		return n, false
 	}
 	defer s.d.Limiter.Release(ip, asn)
+
+	buf := maze.GetBuffer()
+	defer maze.PutBuffer(buf)
+	s.d.Pages.Render(buf, r.URL.Path)
+	body := buf.Bytes()
 	// Headers go out immediately; the body is chunked and trickled.
 	w.WriteHeader(http.StatusOK)
 	if err := http.NewResponseController(w).Flush(); err != nil {
