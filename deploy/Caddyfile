@@ -1,0 +1,42 @@
+# Caddy front end for lawn. Installed to /etc/caddy/Caddyfile.
+#
+# {$LAWN_DOMAIN} is substituted by Caddy from its environment, which a systemd
+# drop-in (/etc/systemd/system/caddy.service.d/lawn.conf) loads from
+# /etc/lawn/caddy.env. Caddy obtains and renews certificates automatically.
+{
+	servers {
+		# HTTP/3 would need UDP 443 open in the Vultr firewall; the tarpit only
+		# needs TCP.
+		protocols h1 h2
+		timeouts {
+			# Slowloris guard on Caddy's side. No read_body/write timeouts: the
+			# maze deliberately keeps responses open for up to 10 minutes.
+			read_header 10s
+			idle 2m
+		}
+		max_header_size 16KB
+	}
+}
+
+www.{$LAWN_DOMAIN} {
+	redir https://{$LAWN_DOMAIN}{uri} permanent
+}
+
+{$LAWN_DOMAIN} {
+	# Deliberately absent:
+	#   encode - compression buffers the body and would defeat the slow drip.
+	#   log    - the app already records every request in SQLite; no per-request
+	#            access log on disk.
+	# X-Forwarded-For is set by reverse_proxy from the real client address
+	# (Caddy ignores any client-supplied value because no trusted_proxies are
+	# configured). The app trusts it only from 127.0.0.1/32 and ::1/128.
+	# /metrics is not proxied anywhere special: the app serves it only on the
+	# admin listener (127.0.0.1:9090), which Caddy never touches.
+	reverse_proxy 127.0.0.1:8080 {
+		# Flush every write immediately so each drip chunk reaches the client.
+		flush_interval -1
+		transport http {
+			dial_timeout 3s
+		}
+	}
+}

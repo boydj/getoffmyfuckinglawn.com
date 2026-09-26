@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly iptoasn.com ASN dataset refresh for lawn
+
+[Timer]
+OnCalendar=weekly
+RandomizedDelaySec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

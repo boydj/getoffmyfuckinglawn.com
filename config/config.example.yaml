@@ -1,0 +1,85 @@
+# lawn configuration. Production copy lives at /etc/lawn/config.yaml; deploy
+# creates it from this file on a host's first deploy (base_url filled in from
+# the domain) and never overwrites it afterwards.
+#
+# Durations use Go syntax (1s, 10m, 168h). Most keys can also be overridden by
+# LAWN_* environment variables (see internal/config); the server secret is
+# read ONLY from the environment (/etc/lawn/env), never from this file.
+
+# Public listener. Caddy reverse-proxies the site to this address.
+listen: "127.0.0.1:8080"
+# Admin listener for /metrics (Prometheus). Keep it on localhost.
+admin_listen: "127.0.0.1:9090"
+# Absolute site URL, used for sitemap.xml and feed links.
+base_url: "https://getoffmyfuckinglawn.com"
+# Peers whose X-Forwarded-For is trusted: Caddy on the same host only.
+trusted_proxies: ["127.0.0.1/32", "::1/128"]
+# Name of the env var holding the HMAC secret that seeds the maze.
+server_secret_env: "LAWN_SECRET"
+
+# SQLite database (WAL mode).
+db_path: "/var/lib/lawn/lawn.db"
+# iptoasn.com ip2asn-combined dataset; refreshed weekly by lawn-asn-refresh.timer.
+asn_db_path: "/var/lib/lawn/ip2asn-combined.tsv.gz"
+# Output of the wall-of-shame builder (served under /shame/).
+public_dir: "/var/lib/lawn/public"
+# Public-domain training texts for the Markov chain.
+corpus_dir: "/opt/lawn/corpus"
+# Known crawlers: UA patterns and verification methods.
+crawlers_file: "/etc/lawn/crawlers.yaml"
+# Optional on-disk templates overriding the ones embedded in the binary.
+templates_dir: "/opt/lawn/templates"
+
+drip:
+  # Bytes written per drip tick.
+  chunk_bytes: 16
+  # Time between ticks (+/-30% jitter).
+  interval: 1s
+  # Longest a single connection is held before the page is finished quickly.
+  max_duration: 10m
+
+limits:
+  # Concurrent dripping connections, overall. Over any limit: fast page, still logged.
+  max_conns_global: 5000
+  # Concurrent dripping connections per ASN.
+  max_conns_per_asn: 200
+  # Concurrent dripping connections per client IP.
+  max_conns_per_ip: 20
+  # Daily /lawn/ egress cap (5 GiB); after it, a tiny static page until UTC midnight.
+  daily_egress_bytes: 5368709120
+
+session:
+  # Gap that splits one client's requests into separate sessions.
+  gap: 10m
+
+shame:
+  # How often `lawn serve` rebuilds the static leaderboard.
+  rebuild_interval: 5m
+  # Minimum violations before a spoofed offender's CIDR lands in blocklist.txt.
+  blocklist_min_violations: 50
+
+retention:
+  # Raw request rows older than this are rolled into daily_aggregates, then deleted.
+  raw_requests_days: 90
+
+attrib:
+  # How long a cached (ip, user agent) classification stays valid.
+  identity_ttl: 168h
+  # Timeout for each reverse/forward DNS lookup during verification.
+  dns_timeout: 2s
+  # How often vendor-published IP-range lists are re-fetched.
+  ranges_refresh: 24h
+  # Where fetched IP-range lists are cached.
+  ranges_cache_dir: "/var/lib/lawn/ranges"
+  # Pending verifications; when full, new ones are dropped (never blocks requests).
+  queue_size: 4096
+  # Concurrent verification workers.
+  workers: 4
+
+log:
+  # Buffered channel between request handlers and the SQLite writer.
+  buffer_size: 65536
+  # Rows per SQLite transaction.
+  batch_size: 512
+  # Longest a row waits in the buffer before being written.
+  flush_interval: 1s

@@ -1,0 +1,20 @@
+# Copy to terraform.tfvars (gitignored) and edit. VULTR_API_KEY goes in the
+# environment, not here.
+
+# Public key installed for root on the box.
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+
+# Who may SSH in (22/tcp). Your own address(es); IPv4 and IPv6 both work.
+admin_cidrs = [
+  "203.0.113.7/32",
+  # "2001:db8:1234::/48",
+]
+
+# Optional overrides (defaults shown).
+# domain   = "getoffmyfuckinglawn.com"
+# region   = "ewr"
+# plan     = "vc2-2c-2gb"
+# os_name  = "Debian 12 x64 (bookworm)"
+# os_id    = 0      # id from `curl -s https://api.vultr.com/v2/os`; skips the os_name lookup
+# hostname = "lawn"
+# dns_ttl  = 300

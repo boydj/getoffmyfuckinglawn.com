@@ -1,0 +1,33 @@
+# Weekly refresh of the iptoasn.com ip2asn-combined dataset.
+[Unit]
+Description=lawn: refresh iptoasn.com ASN dataset
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=lawn
+Group=lawn
+ExecStart=/usr/local/lib/lawn/asn-refresh.sh
+# "+" runs this one step with full privileges so it can signal lawn; it is a
+# no-op when lawn is not running.
+ExecStartPost=+/bin/systemctl try-reload-or-restart lawn.service
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=15min
+
+UMask=0022
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lawn
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
