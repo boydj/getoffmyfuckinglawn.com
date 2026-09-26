@@ -1,0 +1,178 @@
+# Known crawlers (SPEC.md section 7.1).
+#
+# Each entry: org, name, ua_patterns (Go regexps, matched case-insensitively),
+# verify: one of
+#   {method: rdns, domains: [...]}   reverse DNS must equal or be a subdomain
+#                                    of a listed domain, and forward DNS of
+#                                    that name must return the client IP
+#   {method: ip_ranges, url: ...}    vendor-published JSON/text list, fetched
+#                                    daily and cached on disk
+#   {method: ip_ranges, cidrs: [...]}
+#   none                             no official method -> "unverifiable"
+#
+# ORDER MATTERS: the first matching entry wins, so specific tokens
+# (ChatGPT-User, OAI-SearchBot, Applebot-Extended, ...) come before generic
+# ones.
+#
+# Every method below was taken from the vendor's own documentation, checked
+# 2026-09-26 (via web search restricted to the vendor's domain; direct page
+# fetches were blocked from the build sandbox). Never add a URL, domain or
+# CIDR that is not in official vendor docs; use `verify: none` + TODO
+# instead.
+
+# ---------------------------------------------------------------- OpenAI
+# Source: https://developers.openai.com/api/docs/bots (formerly
+# https://platform.openai.com/docs/bots), which publishes per-bot JSON
+# lists at openai.com/{chatgpt-user,searchbot,gptbot}.json.
+- org: OpenAI
+  name: ChatGPT-User
+  ua_patterns: ['\bChatGPT-User\b']
+  verify: {method: ip_ranges, url: "https://openai.com/chatgpt-user.json"}
+
+- org: OpenAI
+  name: OAI-SearchBot
+  ua_patterns: ['\bOAI-SearchBot\b']
+  verify: {method: ip_ranges, url: "https://openai.com/searchbot.json"}
+
+- org: OpenAI
+  name: GPTBot
+  ua_patterns: ['\bGPTBot\b']
+  verify: {method: ip_ranges, url: "https://openai.com/gptbot.json"}
+
+# ------------------------------------------------------------- Anthropic
+# Source: https://support.claude.com/en/articles/8896518-does-anthropic-crawl-data-from-the-web-and-how-can-site-owners-block-the-crawler
+# The article states Anthropic does not publish IP ranges (its bots use
+# service-provider public IPs) and documents no reverse-DNS scheme.
+- org: Anthropic
+  name: Claude-User
+  ua_patterns: ['\bClaude-User\b']
+  # TODO: no official verification method found (checked the support article above, 2026-09-26)
+  verify: {method: none}
+
+- org: Anthropic
+  name: Claude-SearchBot
+  ua_patterns: ['\bClaude-SearchBot\b']
+  # TODO: no official verification method found (checked the support article above, 2026-09-26)
+  verify: {method: none}
+
+- org: Anthropic
+  name: ClaudeBot
+  ua_patterns: ['\bClaudeBot\b']
+  # TODO: no official verification method found (checked the support article above, 2026-09-26)
+  verify: {method: none}
+
+# ----------------------------------------------------------- Common Crawl
+# Source: https://commoncrawl.org/ccbot
+# Common Crawl documents dedicated ranges with reverse DNS under
+# crawl.commoncrawl.org for IPv4 only (no rDNS over IPv6), and publishes all
+# v4+v6 ranges as JSON. The JSON list is used because it covers IPv6.
+- org: Common Crawl
+  name: CCBot
+  ua_patterns: ['\bCCBot\b']
+  verify: {method: ip_ranges, url: "https://index.commoncrawl.org/ccbot.json"}
+
+# ------------------------------------------------------------ Perplexity
+# Source: https://docs.perplexity.ai/docs/resources/perplexity-crawlers
+- org: Perplexity
+  name: Perplexity-User
+  ua_patterns: ['\bPerplexity-User\b']
+  verify: {method: ip_ranges, url: "https://www.perplexity.com/perplexity-user.json"}
+
+- org: Perplexity
+  name: PerplexityBot
+  ua_patterns: ['\bPerplexityBot\b']
+  verify: {method: ip_ranges, url: "https://www.perplexity.com/perplexitybot.json"}
+
+# ------------------------------------------------------------- ByteDance
+# No official ByteDance documentation for Bytespider could be found; only
+# third-party directories describe it. Nothing from those is used here.
+- org: ByteDance
+  name: Bytespider
+  ua_patterns: ['\bBytespider\b']
+  # TODO: no official verification method found (searched for vendor docs, 2026-09-26)
+  verify: {method: none}
+
+# ---------------------------------------------------------------- Amazon
+# Source: https://developer.amazon.com/amazonbot
+# Reverse DNS must be a subdomain of crawl.amazonbot.amazon, then forward
+# confirm. (Amazon also publishes IP lists on developer.amazon.com; rDNS is
+# the documented verification procedure, so it is used.)
+- org: Amazon
+  name: Amazonbot
+  ua_patterns: ['\bAmazonbot\b']
+  verify: {method: rdns, domains: [crawl.amazonbot.amazon]}
+
+# ----------------------------------------------------------------- Apple
+# Source: https://support.apple.com/en-us/119829 ("About Applebot")
+# Applebot-Extended is NOT a fetcher: Apple says it "does not crawl
+# webpages" and is only a robots.txt token controlling how data crawled by
+# Applebot is used. Real Apple fetches always carry the Applebot UA. The entry
+# is kept (and listed first so it wins over the generic Applebot pattern) so
+# that any client literally sending "Applebot-Extended" is recorded as
+# claiming Apple, but it cannot be verified: `none`, i.e. unverifiable.
+- org: Apple
+  name: Applebot-Extended
+  ua_patterns: ['\bApplebot-Extended\b']
+  # NOTE: robots.txt product token only; Apple documents no fetcher with this UA.
+  verify: {method: none}
+
+# Apple documents reverse DNS in *.applebot.apple.com (used here) and,
+# alternatively, a JSON CIDR list linked from the same page.
+- org: Apple
+  name: Applebot
+  ua_patterns: ['\bApplebot\b']
+  verify: {method: rdns, domains: [applebot.apple.com]}
+
+# ---------------------------------------------------------------- Google
+# Google-Extended is a robots.txt product token, not an HTTP user agent:
+# Google fetches with its normal crawler UAs (Googlebot etc.) and the token
+# only controls use for Gemini/Vertex AI. Source:
+# https://developers.google.com/crawling/docs/crawlers-fetchers/google-common-crawlers
+# Kept for the same reason as Applebot-Extended.
+- org: Google
+  name: Google-Extended
+  ua_patterns: ['\bGoogle-Extended\b']
+  # NOTE: robots.txt product token only; Google documents no fetcher with this UA.
+  verify: {method: none}
+
+# Source: https://developers.google.com/crawling/docs/crawlers-fetchers/verify-google-requests
+# Google's verification page accepts googlebot.com, google.com and
+# googleusercontent.com, but per the common-crawlers page, Googlebot itself
+# resolves to crawl-*.googlebot.com or geo-crawl-*.geo.googlebot.com.
+# google.com is used by special-case crawlers (rate-limited-proxy-*) and
+# googleusercontent.com by user-triggered fetchers, *including user-owned
+# ones* (*.gae.googleusercontent.com), so accepting those for a "Googlebot"
+# UA would let anyone on Google Cloud pass. Only googlebot.com is accepted.
+# Alternative (not used): the published list
+# https://developers.google.com/static/crawling/ipranges/common-crawlers.json
+- org: Google
+  name: Googlebot
+  ua_patterns: ['\bGooglebot\b']
+  verify: {method: rdns, domains: [googlebot.com]}
+
+# ------------------------------------------------------------- Microsoft
+# Source: https://www.bing.com/webmasters/help/how-to-verify-bingbot-3905dc26
+# Reverse DNS must end in search.msn.com, then forward confirm. That page
+# says Bing does not publish a list of IP addresses.
+- org: Microsoft
+  name: Bingbot
+  ua_patterns: ['\bbingbot\b']
+  verify: {method: rdns, domains: [search.msn.com]}
+
+# ------------------------------------------------------------------ Meta
+# Source: https://developers.facebook.com/documentation/sharing/webmasters/web-crawlers
+# The page recommends allow-listing by UA or by "the IP addresses used by
+# the crawler" but gives no URL list or reverse-DNS scheme that could be
+# confirmed from it (Meta's other docs derive IPs from routing-registry
+# entries for AS32934, which is not a published crawler list).
+- org: Meta
+  name: meta-externalfetcher
+  ua_patterns: ['\bmeta-externalfetcher\b']
+  # TODO: no official verification method found (checked the page above, 2026-09-26)
+  verify: {method: none}
+
+- org: Meta
+  name: meta-externalagent
+  ua_patterns: ['\bmeta-externalagent\b']
+  # TODO: no official verification method found (checked the page above, 2026-09-26)
+  verify: {method: none}
