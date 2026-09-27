@@ -34,7 +34,11 @@ commands:
   verify-refresh   refresh vendor IP ranges, re-verify stale identities
   stats            print top offenders (--since 24h|7d|30d|all, --limit N)
   gen-robots       print robots.txt in effect
+  version          print the build version
 `
+
+// version is set at build time: -ldflags "-X main.version=<git sha>".
+var version = "dev"
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.LUTC)
@@ -63,6 +67,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return flag.ErrHelp
 	}
 	cmd, rest := args[0], args[1:]
+	if cmd == "version" || cmd == "-version" || cmd == "--version" {
+		fmt.Fprintln(stdout, version)
+		return nil
+	}
 	fs := flag.NewFlagSet("lawn "+cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	cfgPath := fs.String("config", defaultConfigPath(), "path to config.yaml")
@@ -99,6 +107,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 }
 
 func serve(ctx context.Context, cfg config.Config) error {
+	log.Printf("lawn %s starting", version)
 	a, err := app.New(cfg, app.Options{Logf: log.Printf})
 	if err != nil {
 		return err

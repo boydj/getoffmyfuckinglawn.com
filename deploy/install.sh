@@ -109,7 +109,8 @@ systemctl restart lawn.service
 healthy() {
 	local _
 	for _ in $(seq 1 30); do
-		if curl -fsS --max-time 2 -o /dev/null http://127.0.0.1:8080/healthz; then
+		# Quiet: the first attempts race the service start.
+		if curl -fs --max-time 2 -o /dev/null http://127.0.0.1:8080/healthz; then
 			return 0
 		fi
 		sleep 1
@@ -136,10 +137,13 @@ systemctl reload caddy.service
 # Through Caddy with TLS. Non-fatal: certificates only arrive once the
 # domain's nameservers point at this host's DNS records.
 domain="$(sed -n 's/^LAWN_DOMAIN=//p' /etc/lawn/caddy.env)"
-if curl -fsS --max-time 10 -o /dev/null --resolve "$domain:443:127.0.0.1" "https://$domain/healthz"; then
+if err="$(curl -fsS --max-time 10 -o /dev/null --resolve "$domain:443:127.0.0.1" "https://$domain/healthz" 2>&1)"; then
 	log "https://$domain/healthz OK through Caddy"
 else
-	log "WARNING: https://$domain/healthz not reachable through Caddy yet (DNS/certificate pending?)"
+	log "WARNING: https://$domain/healthz not reachable through Caddy yet: ${err#curl: }"
+	log "         Usually the certificate is still pending (nameservers not delegated yet, or"
+	log "         Caddy is backing off after earlier failures). Check: journalctl -u caddy -n 50"
+	log "         Once DNS resolves to this host: systemctl restart caddy"
 fi
 
 systemctl list-timers --no-pager 'lawn-*' || true
