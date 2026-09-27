@@ -186,3 +186,4 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **"Bot-like" signals:** the UA names a bot or HTTP library, the client fetched robots.txt, entered /lawn/, sent no Accept-Language (on rows where headers were captured), or has a crawler-looking PTR. `--all` lifts the filter.
 - **Product token = the UA's self-declared bot/library name.** Browser-looking UAs with bot signals are grouped by ASN, which is how headless scrapers show up.
 - **"New" = the group's earliest UA was first seen (raw requests or `daily_visits`) within the last 7 days.**
+- **Anthropic's three crawlers now verify against `https://claude.com/crawling/bots.json`.** Anthropic's support article (re-checked 2026-09-27) publishes this list and says a source IP on it means the crawler is Anthropic's. It replaces the earlier `verify: none` TODOs, and was confirmed by fetching the list itself (26 IPv4 prefixes, Google-style JSON).
