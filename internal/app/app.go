@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/attrib"
+	"github.com/boydj/getoffmyfuckinglawn.com/internal/bots"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/config"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/drip"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/logstore"
@@ -441,5 +442,38 @@ func VerifyRefresh(ctx context.Context, cfg config.Config, opt Options, out io.W
 		return err
 	}
 	fmt.Fprintf(out, "re-verified %d identities\n", n)
+	return nil
+}
+
+// BotsOptions are the `lawn bots` flags.
+type BotsOptions struct {
+	Since       string
+	UnknownOnly bool
+	NewOnly     bool
+	All         bool
+	Limit       int
+	Details     int
+}
+
+// Bots is `lawn bots`: a private report on every bot-like client.
+func Bots(ctx context.Context, cfg config.Config, o BotsOptions, out io.Writer) error {
+	since, err := bots.ParseSince(o.Since)
+	if err != nil {
+		return err
+	}
+	crawlers, err := attrib.LoadCrawlers(cfg.CrawlersFile)
+	if err != nil {
+		return err
+	}
+	st, err := logstore.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	r, err := bots.Collect(ctx, bots.Options{DB: st.DB(), Crawlers: crawlers, Since: since, All: o.All})
+	if err != nil {
+		return err
+	}
+	bots.Write(out, r, bots.WriteOptions{UnknownOnly: o.UnknownOnly, NewOnly: o.NewOnly, Limit: o.Limit, Details: o.Details})
 	return nil
 }

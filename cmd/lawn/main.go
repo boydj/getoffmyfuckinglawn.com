@@ -33,6 +33,9 @@ commands:
   build-shame      one-off leaderboard build
   verify-refresh   refresh vendor IP ranges, re-verify stale identities
   stats            print top offenders (--since 24h|7d|30d|all, --limit N)
+  bots             private report on every bot seen, compliant or not; flags
+                   new and unknown ones (--since 7d|36h|all, --unknown, --new,
+                   --all, --limit N, --details N)
   gen-robots       print robots.txt in effect
   version          print the build version
 `
@@ -75,7 +78,11 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	cfgPath := fs.String("config", defaultConfigPath(), "path to config.yaml")
 	since := fs.String("since", "24h", "stats window: 24h, 7d, 30d, or all")
-	limit := fs.Int("limit", 20, "stats: rows per section")
+	limit := fs.Int("limit", 20, "stats/bots: rows per section")
+	unknown := fs.Bool("unknown", false, "bots: only bots not in crawlers.yaml")
+	onlyNew := fs.Bool("new", false, "bots: only bots first seen in the last 7 days")
+	all := fs.Bool("all", false, "bots: include clients with no bot signal (likely people)")
+	details := fs.Int("details", 10, "bots: detail blocks for unknown/new bots")
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
@@ -100,6 +107,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return app.VerifyRefresh(ctx, cfg, app.Options{}, stdout)
 	case "stats":
 		return app.Stats(ctx, cfg, *since, *limit, stdout)
+	case "bots":
+		window := *since
+		explicit := false
+		fs.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "since" })
+		if !explicit {
+			window = "7d"
+		}
+		return app.Bots(ctx, cfg, app.BotsOptions{Since: window, UnknownOnly: *unknown, NewOnly: *onlyNew,
+			All: *all, Limit: *limit, Details: *details}, stdout)
 	default:
 		fmt.Fprint(stderr, usage)
 		return fmt.Errorf("unknown command %q", cmd)
