@@ -246,3 +246,7 @@ This deletes the instance (with its database and on-box backups), the firewall g
 ## Status
 
 Built and tested; never applied to a real Vultr account. See the final section of [DECISIONS.md](DECISIONS.md) for what's untested and the open TODOs.
+
+## License
+
+[MIT](LICENSE). The texts in `corpus/` are public-domain Project Gutenberg works and are not covered by the license.
