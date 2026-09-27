@@ -65,7 +65,7 @@ public_dir: "${TMP}/public"
 corpus_dir: "${ROOT}/corpus"
 crawlers_file: "${ROOT}/config/crawlers.yaml"
 drip:     { chunk_bytes: 16, interval: 1s, max_duration: 10m }
-limits:   { max_conns_global: ${GLOBAL}, max_conns_per_asn: ${PER_ASN}, max_conns_per_ip: ${PER_IP} }
+limits:   { max_conns_global: ${GLOBAL}, max_conns_per_asn: ${PER_ASN}, max_conns_per_ip: ${PER_IP}, max_conns_per_prefix: 0, prefix_rate: 0 }
 attrib:   { ranges_cache_dir: "${TMP}/ranges" }
 EOF
 

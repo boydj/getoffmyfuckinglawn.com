@@ -507,3 +507,24 @@ func TestLogReferer(t *testing.T) {
 		}
 	}
 }
+
+type fakeRate struct{ allow bool }
+
+func (f fakeRate) Allow(netip.Addr) bool { return f.allow }
+
+func TestMazeRateLimited(t *testing.T) {
+	r := newRig(t)
+	r.srv.d.Rate = fakeRate{allow: false}
+	w := r.do("GET", "/lawn/x", "203.0.113.7", "ua")
+	rec := r.log.reqs[0]
+	if w.Code != 200 || rec.EndReason != "rate_limited" || rec.Dripped || !rec.IsViolation || r.drip.drips != 0 || r.lim.active != 0 {
+		t.Fatalf("code=%d rec=%+v drips=%d", w.Code, rec, r.drip.drips)
+	}
+	if !strings.Contains(w.Body.String(), "full") || r.srv.Metrics.RateLimited.Load() != 1 {
+		t.Error("rate-limited requests get the tiny page and are counted")
+	}
+	// Non-maze routes are never rate limited.
+	if w := r.do("GET", "/", "203.0.113.7", "ua"); w.Code != 200 || r.log.reqs[1].EndReason != "" {
+		t.Error("homepage must not be rate limited")
+	}
+}

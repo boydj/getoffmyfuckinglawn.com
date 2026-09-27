@@ -29,14 +29,15 @@ var routeNames = [numRoutes]string{"other", "home", "robots", "sitemap", "lawn",
 
 // Metrics are hot-path counters; all fields are atomics.
 type Metrics struct {
-	Requests   [numRoutes]atomic.Uint64
-	Violations atomic.Uint64
-	Dripped    atomic.Uint64
-	Fast       atomic.Uint64
-	LimitShed  atomic.Uint64
-	BytesSent  atomic.Uint64
-	LogDropped atomic.Uint64
-	DripEnds   [4]atomic.Uint64 // by drip.Outcome
+	Requests    [numRoutes]atomic.Uint64
+	Violations  atomic.Uint64
+	Dripped     atomic.Uint64
+	Fast        atomic.Uint64
+	LimitShed   atomic.Uint64
+	BytesSent   atomic.Uint64
+	LogDropped  atomic.Uint64
+	RateLimited atomic.Uint64
+	DripEnds    [4]atomic.Uint64 // by drip.Outcome
 }
 
 func (m *Metrics) observeDrip(o drip.Outcome) {
@@ -102,6 +103,7 @@ func (m *MetricsRegistry) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	counter("lawn_fast_total", "Maze pages served fast (limits, HEAD).", mt.Fast.Load())
 	counter("lawn_limit_shed_total", "Maze pages served fast because a connection cap was hit.", mt.LimitShed.Load())
 	counter("lawn_bytes_sent_total", "Response body bytes sent.", mt.BytesSent.Load())
+	counter("lawn_rate_limited_total", "Maze requests answered with the tiny page because their /24 or /48 exceeded prefix_rate.", mt.RateLimited.Load())
 	counter("lawn_log_dropped_total", "Log records dropped because the writer queue was full.", mt.LogDropped.Load())
 	fmt.Fprintf(b, "# HELP lawn_drip_end_total Dripped maze responses by how they ended.\n# TYPE lawn_drip_end_total counter\n")
 	for o := drip.Completed; int(o) < len(mt.DripEnds); o++ {

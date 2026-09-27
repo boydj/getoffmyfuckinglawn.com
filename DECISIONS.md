@@ -212,3 +212,7 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
   - **Spoofed claims:** they stay in the Hall of Liars.
   - **Why:** presenting a person's one-off request as a crawler ignoring the rules is the easiest claim to dispute.
 - **The log keeps the path plus query parameter NAMES only (`/x?q=secret&a=1` → `/x?a&q`).** The Referer likewise keeps scheme, host, path and parameter names, with no values, userinfo or fragment. Values can carry tokens or personal data, and nothing needs them.
+- **Per-prefix limits:** there is now a /24 (IPv4) or /48 (IPv6) level in the concurrency limiter (`limits.max_conns_per_prefix`, default 50) and a per-prefix token bucket for new `/lawn/` requests (`limits.prefix_rate` 10/s, `prefix_burst` 100). Over either limit, the request gets the existing tiny "lawn is full" page, logged with `end_reason` `shed` or `rate_limited`, never a 5xx.
+  - **Why prefixes:** rotating addresses inside one network, or firing many short requests, used to slip past the per-IP cap.
+  - **Why not 5/s:** an adaptively dripped crawler with 20 parallel connections on ~4 s pages already makes ~5 req/s, and a tighter limit would clip the depth #9 was for. 10/s still stops floods.
+  - **Implementation:** stdlib only (no `x/time/rate`), with memory bounded at 100k prefixes. `0` turns either limit off; the load-test script does, because it simulates thousands of clients from a few /24s.

@@ -37,6 +37,11 @@ type Dripper interface {
 	Fast(w http.ResponseWriter, body []byte) (int64, error)
 }
 
+// RateLimiter bounds how fast new /lawn/ requests may start.
+type RateLimiter interface {
+	Allow(ip netip.Addr) bool
+}
+
 // Limiter caps concurrent drips.
 type Limiter interface {
 	Acquire(ip netip.Addr, asn uint32) bool
@@ -72,6 +77,7 @@ type Deps struct {
 	Pages     PageRenderer
 	Dripper   Dripper
 	Limiter   Limiter
+	Rate      RateLimiter // may be nil: no rate limit
 	Egress    Egress
 	Logger    Logger
 	Observer  Observer       // may be nil
@@ -229,8 +235,9 @@ func (s *Server) logRobots(f logstore.RobotsFetch) {
 // End reasons for maze requests that were not dripped. Dripped ones use
 // drip.Outcome names (complete, cutoff, client_gone, write_error).
 const (
-	endShed = "shed" // over a connection cap: tiny page, no drip
-	endHead = "head" // HEAD request: headers only
+	endShed = "shed"         // over a connection cap: tiny page, no drip
+	endHead = "head"         // HEAD request: headers only
+	endRate = "rate_limited" // prefix over its request rate: tiny page, no render
 )
 
 // serveMaze renders the page up front into a pooled buffer, then drips it
@@ -246,6 +253,13 @@ func (s *Server) serveMaze(w http.ResponseWriter, r *http.Request, ip netip.Addr
 	if r.Method == http.MethodHead {
 		w.WriteHeader(http.StatusOK)
 		return 0, false, endHead
+	}
+	if ip.IsValid() && s.d.Rate != nil && !s.d.Rate.Allow(ip) {
+		s.Metrics.RateLimited.Add(1)
+		h.Set("Content-Length", strconv.Itoa(len(shedPage)))
+		w.WriteHeader(http.StatusOK)
+		n, _ := s.d.Dripper.Fast(w, shedPage)
+		return n, false, endRate
 	}
 	if !ip.IsValid() || !s.d.Limiter.Acquire(ip, asn) {
 		// Load shedding: a tiny static page, no render, no drip (SPEC.md

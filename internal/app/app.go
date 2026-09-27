@@ -50,6 +50,7 @@ type App struct {
 	buildMu    sync.Mutex
 	asnEntries atomic.Int64
 	patience   *drip.Patience
+	rate       *drip.RateLimiter
 	crawlers   atomic.Pointer[[]attrib.Crawler] // for the shame builder's exemptions
 }
 
@@ -112,7 +113,10 @@ func New(cfg config.Config, opt Options) (*App, error) {
 		MaxDuration: cfg.Drip.MaxDuration,
 		Jitter:      0.3,
 	}, opt.Clock, egress)
-	limiter := drip.NewLimiter(cfg.Limits.MaxConnsGlobal, cfg.Limits.MaxConnsPerASN, cfg.Limits.MaxConnsPerIP)
+	limiter := drip.NewLimiter(cfg.Limits.MaxConnsGlobal, cfg.Limits.MaxConnsPerASN, cfg.Limits.MaxConnsPerIP).
+		WithPrefixCap(cfg.Limits.MaxConnsPerPrefix)
+	rate := drip.NewRateLimiter(cfg.Limits.PrefixRate, cfg.Limits.PrefixBurst, opt.Now)
+	a.rate = rate
 	var patience *drip.Patience
 	if cfg.Drip.Adaptive {
 		patience = drip.NewPatience(drip.PatienceOptions{
@@ -137,6 +141,7 @@ func New(cfg config.Config, opt Options) (*App, error) {
 		Pages:     gen,
 		Dripper:   dripper,
 		Limiter:   limiter,
+		Rate:      rate,
 		Patience:  patience,
 		Egress:    egress,
 		Logger:    a.Writer,
@@ -374,6 +379,7 @@ func (a *App) registerMetrics() {
 	g("lawn_classifier_queue_depth", "Identities waiting for verification.", "gauge", func() float64 { return float64(a.Classifier.Stats().Queued) })
 	g("lawn_classifier_dropped_total", "Identities not queued because the queue was full.", "counter", func() float64 { return float64(a.Classifier.Stats().Dropped) })
 	g("lawn_classifier_classified_total", "Identities classified.", "counter", func() float64 { return float64(a.Classifier.Stats().Classified) })
+	g("lawn_rate_limit_prefixes", "Network prefixes with a live request-rate bucket.", "gauge", func() float64 { return float64(a.rate.Len()) })
 	g("lawn_patience_tracked", "Clients with a learned drip budget (adaptive drip).", "gauge", func() float64 { return float64(a.patience.Len()) })
 	g("lawn_classifier_ptr_lookups_total", "Reverse-DNS lookups recorded for the hosts table.", "counter", func() float64 { return float64(a.Classifier.Stats().PTRLookups) })
 	g("lawn_asn_ranges", "Ranges in the loaded ASN table.", "gauge", func() float64 { return float64(a.asnEntries.Load()) })

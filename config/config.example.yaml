@@ -52,6 +52,14 @@ limits:
   max_conns_per_asn: 200
   # Concurrent dripping connections per client IP.
   max_conns_per_ip: 20
+  # Concurrent dripping connections per /24 (IPv4) or /48 (IPv6): catches
+  # pools rotating addresses inside one network. 0 = off.
+  max_conns_per_prefix: 50
+  # New /lawn/ requests per /24 or /48: token bucket of prefix_rate per
+  # second, up to prefix_burst at once. Over it: the tiny "lawn is full"
+  # page (still logged, never a 5xx). prefix_rate 0 = off.
+  prefix_rate: 10
+  prefix_burst: 100
 
 session:
   # Gap that splits one client's requests into separate sessions.

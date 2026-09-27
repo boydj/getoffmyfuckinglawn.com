@@ -69,6 +69,7 @@ func testConfig(t *testing.T) config.Config {
 	cfg.Log.FlushInterval = 10 * time.Millisecond
 	cfg.Shame.RebuildInterval = time.Hour
 	cfg.Shame.BlocklistMinViolations = 5
+	cfg.Limits.PrefixRate = 0 // the walk below is about the pipeline, not rate limits
 	if err := os.WriteFile(cfg.CrawlersFile, []byte(crawlersFixture), 0o644); err != nil {
 		t.Fatal(err)
 	}

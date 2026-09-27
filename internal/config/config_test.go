@@ -55,7 +55,7 @@ limits: { max_conns_global: 10, max_conns_per_asn: 5, max_conns_per_ip: 2, daily
 	if c.Drip.ChunkBytes != 32 || c.Drip.Interval != 250*time.Millisecond || c.Drip.MaxDuration != 2*time.Minute {
 		t.Fatalf("drip: %+v", c.Drip)
 	}
-	if c.Limits.MaxConnsPerIP != 2 {
+	if c.Limits.MaxConnsPerIP != 2 || c.Limits.MaxConnsPerPrefix != 50 || c.Limits.PrefixRate != 10 || c.Limits.PrefixBurst != 100 {
 		t.Fatalf("limits: %+v", c.Limits)
 	}
 	// Unset keys keep defaults.
@@ -84,6 +84,12 @@ func TestInvalid(t *testing.T) {
 	}
 	if _, err := Load(p, env(nil)); err == nil {
 		t.Fatal("expected error for adaptive_factor > 1")
+	}
+	if err := os.WriteFile(p, []byte("limits: { prefix_rate: -1 }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p, env(nil)); err == nil {
+		t.Fatal("expected error for negative prefix_rate")
 	}
 	if err := os.WriteFile(p, []byte("drip: { chunk_bytes: 0 }\n"), 0o600); err != nil {
 		t.Fatal(err)
