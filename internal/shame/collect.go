@@ -180,6 +180,12 @@ type Report struct {
 	Blocklist    []string
 	BlocklistMin int
 	Warnings     []string
+
+	// WellBehaved lists clients that fetched robots.txt and never requested
+	// anything under /lawn/, grouped like the wall (see wellbehaved.go),
+	// most recently seen first. WellBehavedFeed is well-behaved.json.
+	WellBehaved     []*WellBehavedGroup
+	WellBehavedFeed []WellBehavedEntry
 }
 
 // ---- aggregation internals ----
@@ -277,9 +283,10 @@ type atom struct {
 }
 
 type collector struct {
-	gapMs int64
-	cut   [NumWindows]int64
-	atoms map[atomKey]*atom
+	gapMs  int64
+	cut    [NumWindows]int64
+	atoms  map[atomKey]*atom
+	polite map[atomKey]*politeAtom
 }
 
 func (c *collector) atom(k atomKey, asnOrg string) *atom {
@@ -317,7 +324,9 @@ type pair struct {
 	asn         uint32
 	asnOrg      []byte
 	events      []logstore.Event
-	viol        bool
+	viol        bool // a raw /lawn/ request
+	rolledViol  bool // a /lawn/ request in daily_visits or daily_aggregates
+	vis         [NumWindows]Visits
 	ring        [maxPaths][]byte
 	ringTs      [maxPaths]int64
 	ringN       int
@@ -331,6 +340,8 @@ func (p *pair) reset(ip, ua, status, org []byte) {
 	p.asnOrg = p.asnOrg[:0]
 	p.events = p.events[:0]
 	p.viol = false
+	p.rolledViol = false
+	p.vis = [NumWindows]Visits{}
 	p.ringN = 0
 }
 
@@ -341,13 +352,67 @@ func (p *pair) pushPath(ts int64, path []byte) {
 	p.ringN++
 }
 
-const rawQuery = `SELECT r.ip, COALESCE(r.user_agent, ''), r.ts_start, COALESCE(r.ts_end, 0),
-  r.is_violation, COALESCE(r.depth, 0), COALESCE(r.bytes_sent, 0), COALESCE(r.asn, 0),
-  COALESCE(r.asn_org, ''), r.path, COALESCE(i.status, ''), COALESCE(i.claimed_org, '')
-FROM requests r
-LEFT JOIN identities i ON i.ip = r.ip AND i.user_agent = COALESCE(r.user_agent, '')
-WHERE r.is_violation = 1 OR r.path = '/robots.txt'
-ORDER BY r.ip, COALESCE(r.user_agent, ''), r.ts_start, r.id`
+// Row sources in rawQuery.
+const (
+	srcRequest    = 0 // one raw request
+	srcDailyVisit = 1 // a daily_visits rollup (every visitor, older than retention)
+	srcDailyAgg   = 2 // a daily_aggregates rollup with violations
+)
+
+// Raw-row kind bits computed in SQL, so non-violation paths never leave
+// SQLite: a /robots.txt path (any method, for session read_rules), a GET of
+// it (a counted robots.txt fetch), and a GET of a page carrying hidden
+// /lawn/ links (the bait: / and /sitemap.xml, with or without a query).
+const (
+	kindRobotsPath = 1
+	kindRobotsGet  = 2
+	kindBaitGet    = 4
+)
+
+// rawQuery streams every request plus the rolled-up visit and violation
+// history, one (ip, user_agent) at a time: raw rows first in time order,
+// then rollups. Paths are only returned for violations (sample paths). As a
+// flat compound, SQLite merges the branches and walks requests through
+// idx_req_ip_ts, sorting only within each IP rather than the whole table.
+const rawQuery = `SELECT r.ip, COALESCE(r.user_agent, ''), 0, r.ts_start, COALESCE(r.ts_end, 0), r.is_violation,
+    COALESCE(r.depth, 0), COALESCE(r.bytes_sent, 0), COALESCE(r.asn, 0), COALESCE(r.asn_org, ''),
+    CASE WHEN r.is_violation = 1 THEN r.path ELSE '' END,
+    CASE
+      WHEN r.is_violation = 1 THEN 0
+      WHEN r.path = '/robots.txt' OR substr(r.path, 1, 12) = '/robots.txt?' THEN 1 + 2 * (r.method = 'GET')
+      WHEN r.method = 'GET' AND (r.path IN ('/', '/sitemap.xml') OR substr(r.path, 1, 2) = '/?'
+        OR substr(r.path, 1, 13) = '/sitemap.xml?') THEN 4
+      ELSE 0 END,
+    1, 0, 0, COALESCE(i.status, ''), COALESCE(i.claimed_org, ''), r.id
+  FROM requests r LEFT JOIN identities i ON i.ip = r.ip AND i.user_agent = COALESCE(r.user_agent, '')
+UNION ALL
+SELECT d.ip, d.user_agent, 1, d.first_ts, d.last_ts, d.violations, 0, 0, COALESCE(d.asn, 0), COALESCE(d.asn_org, ''),
+    '', 0, d.requests, d.robots, d.bait_views, COALESCE(i.status, ''), COALESCE(i.claimed_org, ''), 0
+  FROM daily_visits d LEFT JOIN identities i ON i.ip = d.ip AND i.user_agent = d.user_agent
+UNION ALL
+SELECT a.ip, a.user_agent, 2, a.first_ts, a.last_ts, a.pages, 0, 0, 0, '', '', 0, 0, 0, 0,
+    COALESCE(i.status, ''), COALESCE(i.claimed_org, ''), 0
+  FROM daily_aggregates a LEFT JOIN identities i ON i.ip = a.ip AND i.user_agent = a.user_agent WHERE a.pages > 0
+ORDER BY 1, 2, 3, 4, 18`
+
+// visit counts one raw request into the trailing windows it falls in.
+func (p *pair) visit(cut *[NumWindows]int64, ts, tsEnd int64, kind int64) {
+	last := max(ts, tsEnd)
+	for w := range NumWindows {
+		if w != WAll && ts < cut[w] {
+			continue
+		}
+		v := &p.vis[w]
+		v.Requests++
+		if kind&kindRobotsGet != 0 {
+			v.Robots++
+		}
+		if kind&kindBaitGet != 0 {
+			v.Bait++
+		}
+		v.see(ts, last)
+	}
+}
 
 func (c *collector) scanRaw(ctx context.Context, db *sql.DB) error {
 	rows, err := db.QueryContext(ctx, rawQuery)
@@ -357,13 +422,15 @@ func (c *collector) scanRaw(ctx context.Context, db *sql.DB) error {
 	defer rows.Close()
 	var (
 		ip, ua, asnOrg, path, status, org sql.RawBytes
-		ts, tsEnd, isViol, depth, nbytes  int64
-		asn                               int64
+		src, ts, tsEnd, viol, depth       int64
+		nbytes, asn, kind                 int64
+		reqs, robots, bait, rowID         int64
 		p                                 pair
 		started                           bool
 	)
 	for rows.Next() {
-		if err := rows.Scan(&ip, &ua, &ts, &tsEnd, &isViol, &depth, &nbytes, &asn, &asnOrg, &path, &status, &org); err != nil {
+		if err := rows.Scan(&ip, &ua, &src, &ts, &tsEnd, &viol, &depth, &nbytes, &asn, &asnOrg,
+			&path, &kind, &reqs, &robots, &bait, &status, &org, &rowID); err != nil {
 			return fmt.Errorf("shame: scan requests: %w", err)
 		}
 		if !started || !bytes.Equal(ip, p.ip) || !bytes.Equal(ua, p.ua) {
@@ -373,21 +440,44 @@ func (c *collector) scanRaw(ctx context.Context, db *sql.DB) error {
 			p.reset(ip, ua, status, org)
 			started = true
 		}
-		v := isViol == 1
-		if asn > 0 && asn <= 1<<32-1 {
-			p.asn = uint32(asn)
-			p.asnOrg = append(p.asnOrg[:0], asnOrg...)
-		}
-		if v {
-			p.viol = true
-			if samplePathOK(path) {
-				p.pushPath(ts, path)
+		validASN := asn > 0 && asn <= 1<<32-1
+		switch src {
+		case srcRequest:
+			if validASN {
+				p.asn = uint32(asn)
+				p.asnOrg = append(p.asnOrg[:0], asnOrg...)
 			}
+			p.visit(&c.cut, ts, tsEnd, kind)
+			v := viol == 1
+			if v {
+				p.viol = true
+				if samplePathOK(path) {
+					p.pushPath(ts, path)
+				}
+			} else if kind&kindRobotsPath == 0 {
+				continue // neither a violation nor robots.txt: no session event
+			}
+			p.events = append(p.events, logstore.Event{
+				TsStart: ts, TsEnd: tsEnd, IsViolation: v, IsRobots: !v,
+				Depth: int(depth), Bytes: nbytes,
+			})
+		case srcDailyVisit:
+			// Rollups sort after raw rows: raw (newer) ASN data wins.
+			if validASN && p.asn == 0 {
+				p.asn = uint32(asn)
+				p.asnOrg = append(p.asnOrg[:0], asnOrg...)
+			}
+			if viol > 0 {
+				p.rolledViol = true
+			}
+			v := &p.vis[WAll]
+			v.Requests += max(reqs, 0)
+			v.Robots += max(robots, 0)
+			v.Bait += max(bait, 0)
+			v.see(ts, max(ts, tsEnd))
+		default: // srcDailyAgg
+			p.rolledViol = true
 		}
-		p.events = append(p.events, logstore.Event{
-			TsStart: ts, TsEnd: tsEnd, IsViolation: v, IsRobots: !v,
-			Depth: int(depth), Bytes: nbytes,
-		})
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("shame: read requests: %w", err)
@@ -420,6 +510,9 @@ func sessionMetrics(ss []logstore.Session) Metrics {
 
 func (c *collector) flushPair(p *pair) {
 	if !p.viol {
+		if !p.rolledViol && p.vis[WAll].Robots > 0 {
+			c.flushPolite(p)
+		}
 		return
 	}
 	a := c.atom(atomKey{status: p.status, org: p.org, asn: p.asn}, string(p.asnOrg))
@@ -549,12 +642,14 @@ func (c *collector) scanDaily(ctx context.Context, db *sql.DB) error {
 // Collect runs the aggregation queries and returns the report. It streams
 // raw rows ordered by (ip, user_agent, ts_start) and derives sessions one
 // pair at a time, so memory scales with the number of groups, not rows.
+// The same pass merges each pair's rolled-up history (daily_visits,
+// daily_aggregates) to decide whether it is well-behaved.
 func Collect(ctx context.Context, opt Options) (*Report, error) {
 	if opt.DB == nil {
 		return nil, errors.New("shame: nil DB")
 	}
 	now := opt.now().UTC()
-	c := &collector{gapMs: opt.gap().Milliseconds(), atoms: map[atomKey]*atom{}}
+	c := &collector{gapMs: opt.gap().Milliseconds(), atoms: map[atomKey]*atom{}, polite: map[atomKey]*politeAtom{}}
 	for w, d := range windowDur {
 		if d > 0 {
 			c.cut[w] = now.Add(-d).UnixMilli()
@@ -774,6 +869,7 @@ func (c *collector) report(now time.Time, blocklistMin int) *Report {
 	}
 	r.Feed = buildFeed(atomGroups)
 	r.Blocklist = buildBlocklist(atomGroups, blocklistMin)
+	c.wellBehaved(r)
 	return r
 }
 

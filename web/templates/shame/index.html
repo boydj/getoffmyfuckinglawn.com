@@ -2,6 +2,7 @@
 <h1>Wall of Shame</h1>
 <p class="lede">Our <a href="/robots.txt">robots.txt</a> has one rule: stay out of <code>/lawn/</code>. Everyone below walked straight onto the grass anyway, so we kept them busy in an endless maze served a few bytes a second. The tables list only what our logs show: which client (as far as it can be verified), how many disallowed pages it fetched, and how long we held it.</p>
 <p class="note">Generated {{.Generated}}. Rebuilt every few minutes. Also available as <a href="feed.json">feed.json</a> and <a href="blocklist.txt">blocklist.txt</a>.</p>
+<p>Not every bot is a menace: see the <a href="well-behaved/">well-behaved crawlers</a> that read robots.txt and stayed off the lawn.</p>
 
 <ul class="stats">
 <li><b>{{hours .All.HeldMs}}</b>bot-hours wasted (all time)</li>
@@ -43,6 +44,7 @@
 
 <h2 id="labels">What the labels mean</h2>
 {{template "shame-legend"}}
+<p><a href="well-behaved/">Well-behaved crawlers</a>: read robots.txt, never entered <code>/lawn/</code>. Also as <a href="well-behaved.json">well-behaved.json</a>.</p>
 </main>
 {{template "footer" .RobotsTxt}}
 </body>

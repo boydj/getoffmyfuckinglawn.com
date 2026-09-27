@@ -74,6 +74,8 @@ ALTER TABLE requests ADD COLUMN header_names TEXT;  -- sorted names of client-se
 ALTER TABLE requests ADD COLUMN proto TEXT;         -- client HTTP version as seen by Caddy, e.g. HTTP/2.0
 ALTER TABLE requests ADD COLUMN tls TEXT;           -- "version cipher alpn" as seen by Caddy
 CREATE INDEX idx_req_ts ON requests(ts_start);
+-- Per-client scans (shame, rollup) walk rows in (ip, user_agent) order.
+CREATE INDEX idx_req_ip_ua_ts ON requests(ip, user_agent, ts_start);
 
 -- Reverse DNS for every visiting IP (not forward-confirmed; that is
 -- identities' job for known crawlers). ptr '' = no PTR record.

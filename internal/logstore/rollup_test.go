@@ -205,6 +205,8 @@ func TestRollupDailyVisitsKeepsEveryVisitor(t *testing.T) {
 		req("192.0.2.10", good, "/", at(d1, 8, 1), at(d1, 8, 1)+5, false, -1),
 		req("192.0.2.10", good, "/sitemap.xml", at(d1, 8, 2), at(d1, 8, 2), false, -1),
 		req("192.0.2.10", good, "/shame/", at(d1, 9, 0), at(d1, 9, 0), false, -1),
+		// A HEAD returns no body: counted as a request, not as reading robots.txt.
+		{TsStart: at(d1, 8, 30), TsEnd: at(d1, 8, 30), IP: "192.0.2.10", UserAgent: good, Method: "HEAD", Path: "/robots.txt", Depth: -1},
 		// A violator.
 		req("192.0.2.20", bad, "/", at(d1, 10, 0), at(d1, 10, 0), false, -1),
 		req("192.0.2.20", bad, "/lawn/x", at(d1, 10, 1), at(d1, 10, 3), true, 0),
@@ -227,7 +229,7 @@ func TestRollupDailyVisitsKeepsEveryVisitor(t *testing.T) {
 		}
 		return v
 	}
-	if g := get("192.0.2.10", good); g != (visit{4, 1, 2, 0, at(d1, 8, 0), at(d1, 9, 0)}) {
+	if g := get("192.0.2.10", good); g != (visit{5, 1, 2, 0, at(d1, 8, 0), at(d1, 9, 0)}) {
 		t.Errorf("compliant bot: %+v", g)
 	}
 	if b := get("192.0.2.20", bad); b != (visit{2, 0, 1, 1, at(d1, 10, 0), at(d1, 10, 3)}) {

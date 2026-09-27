@@ -187,3 +187,18 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **Product token = the UA's self-declared bot/library name.** Browser-looking UAs with bot signals are grouped by ASN, which is how headless scrapers show up.
 - **"New" = the group's earliest UA was first seen (raw requests or `daily_visits`) within the last 7 days.**
 - **Anthropic's three crawlers now verify against `https://claude.com/crawling/bots.json`.** Anthropic's support article (re-checked 2026-09-27) publishes this list and says a source IP on it means the crawler is Anthropic's. It replaces the earlier `verify: none` TODOs, and was confirmed by fetching the list itself (26 IPv4 prefixes, Google-style JSON).
+
+## Well-behaved crawlers page (teammate)
+
+- **Eligibility: at least one GET of `/robots.txt` and zero `/lawn/` history anywhere (raw rows, `daily_visits.violations`, `daily_aggregates`).** One violation ever puts a client on the wall, never on both lists; clients that never fetched robots.txt aren't listed, because we can't tell whether they followed it.
+- **Only GET counts as reading robots.txt or seeing the bait, in raw rows, in the rollup and in `lawn bots`.** HEAD has no body, and other methods get a 405. The lead aligned the rollup and `lawn bots` to GET-only too, so every source counts the same way.
+- **Query-string variants (`/robots.txt?…`, `/?…`, `/sitemap.xml?…`) count.** The server serves the same page for them.
+- **Grouping mirrors the wall:**
+  - verified and unverifiable by claimed org, each in its own clearly labelled section;
+  - anonymous by ASN;
+  - spoofed compliant clients under their ASN with the failed claim stated, never credited to the named org.
+- **IPs go through `DisplayCIDR` plus the `publishable` check.** Only verified crawlers show /32 or /128; everything else is /24 or /48 at most.
+- **`well-behaved.json` has one entry per (status, claimed org, ASN), like `feed.json`, and adds `claimed_org`.** The page shows groups. Well-behaved clients never enter `blocklist.txt`.
+- **Rows are ordered most recently seen first; the 24h/7d/30d windows use raw rows, and all-time adds `daily_visits`.** Same rules as the wall.
+- **Collection is a single streaming scan: a flat UNION ALL over requests, `daily_visits` and `daily_aggregates`, ordered by (ip, ua).** Memory is bounded to one client pair at a time. The lead added `idx_req_ip_ua_ts` to migration 3 (not yet deployed anywhere) so the scan and the rollup walk rows in index order. The whole scan costs about 1.3× the old one on a 1M-row test.
+- **`lawn stats` gains a "Well-behaved" section that shows network labels only.**

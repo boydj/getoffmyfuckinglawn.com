@@ -254,8 +254,8 @@ func (s *Store) rollupDay(ctx context.Context, dayStart, dayEnd, gapMs int64) (i
 	if _, err := tx.ExecContext(ctx, `INSERT INTO daily_visits
 	 (day, ip, user_agent, asn, asn_org, requests, robots, bait_views, violations, first_ts, last_ts)
 	 SELECT ?, ip, COALESCE(user_agent, ''), MAX(asn), MAX(asn_org), COUNT(*),
-	   SUM(path = '/robots.txt' OR path LIKE '/robots.txt?%'),
-	   SUM(path IN ('/', '/sitemap.xml')),
+	   SUM(method = 'GET' AND (path = '/robots.txt' OR path LIKE '/robots.txt?%')),
+	   SUM(method = 'GET' AND (path IN ('/', '/sitemap.xml') OR path LIKE '/?%' OR path LIKE '/sitemap.xml?%')),
 	   SUM(is_violation),
 	   MIN(ts_start), MAX(MAX(ts_start, COALESCE(ts_end, ts_start)))
 	 FROM requests WHERE ts_start >= ? AND ts_start < ?
