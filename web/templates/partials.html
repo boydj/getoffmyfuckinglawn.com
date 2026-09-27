@@ -11,9 +11,14 @@ h2{margin-top:2rem;padding-bottom:.2rem;border-bottom:1px solid var(--line);font
 .lede,.note,small{color:var(--mute)}
 .tw{overflow-x:auto}
 table{border-collapse:collapse;width:100%;font-size:.85rem;font-variant-numeric:tabular-nums}
-th,td{padding:.3rem .5rem;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;vertical-align:top}
-th:first-child,td:first-child,.l{text-align:left}
-td.w{white-space:normal;word-break:break-word}
+th,td{padding:.3rem .5rem;border-bottom:1px solid var(--line);text-align:right;vertical-align:top}
+td{white-space:nowrap}
+th{vertical-align:bottom}
+th[rowspan],tr:first-child>th:first-child,td:first-child,.l{text-align:left}
+th[rowspan]:not(:first-child):not(.l){text-align:right}
+th.g{text-align:center;border-bottom:none;padding-bottom:0}
+td.w{white-space:normal;overflow-wrap:break-word;min-width:12rem}
+code.ua{display:block;margin-top:.3rem;font-size:.75rem;color:var(--mute)}
 code,pre{font:.85rem/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
 pre{background:var(--code);padding:.75rem;overflow-x:auto}
 .b{display:inline-block;padding:0 .4em;border:1px solid;border-radius:.3em;font-size:.75rem;margin:0 .2em .1em 0;white-space:nowrap}
