@@ -61,7 +61,7 @@ CREATE TABLE daily_aggregates (
 	// 2: why each request ended, and request headers that help tell real
 	// crawlers from scripts. Stored for analysis only; never published.
 	`
-ALTER TABLE requests ADD COLUMN end_reason TEXT;       -- complete|cutoff|client_gone|write_error|shed|egress_cap|head; NULL outside /lawn/
+ALTER TABLE requests ADD COLUMN end_reason TEXT;       -- complete|cutoff|client_gone|write_error|shed|head (egress_cap in older rows); NULL outside /lawn/
 ALTER TABLE requests ADD COLUMN referer TEXT;
 ALTER TABLE requests ADD COLUMN accept TEXT;
 ALTER TABLE requests ADD COLUMN accept_language TEXT;

@@ -42,9 +42,8 @@ type Limiter interface {
 	Active() int
 }
 
-// Egress is the daily byte budget.
+// Egress counts bytes sent today (metrics only; there is no cap).
 type Egress interface {
-	Exceeded() bool
 	Add(n int64)
 	Today() int64
 }
@@ -124,8 +123,6 @@ func (s *Server) lookupASN(a netip.Addr) (uint32, string) {
 // shedPage is served for /lawn/* when a connection cap is hit.
 var shedPage = []byte("<!doctype html><title>busy</title><p>The lawn is full. Try again later.</p>\n")
 
-// egressCapPage is served for /lawn/* once the daily egress cap is hit.
-var egressCapPage = []byte("<!doctype html><title>closed</title><p>The lawn is closed for today.</p>\n")
 
 // ServeHTTP implements http.Handler. Every request is logged.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -220,7 +217,6 @@ func (s *Server) logRobots(f logstore.RobotsFetch) {
 // drip.Outcome names (complete, cutoff, client_gone, write_error).
 const (
 	endShed      = "shed"       // over a connection cap: tiny page, no drip
-	endEgressCap = "egress_cap" // daily egress cap reached
 	endHead      = "head"       // HEAD request: headers only
 )
 
@@ -233,11 +229,6 @@ func (s *Server) serveMaze(w http.ResponseWriter, r *http.Request, ip netip.Addr
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Robots-Tag", "noindex, nofollow")
 	h.Set("Content-Type", "text/html; charset=utf-8")
-
-	if s.d.Egress.Exceeded() {
-		s.Metrics.EgressCapped.Add(1)
-		return s.writeSmall(w, http.StatusOK, "text/html; charset=utf-8", egressCapPage, r), false, endEgressCap
-	}
 
 	if r.Method == http.MethodHead {
 		w.WriteHeader(http.StatusOK)

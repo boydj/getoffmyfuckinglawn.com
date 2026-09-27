@@ -101,7 +101,8 @@ func New(cfg config.Config, opt Options) (*App, error) {
 	a.Ranges = newRangeStore(cfg, crawlers, opt)
 	a.Classifier = newClassifier(cfg, crawlers, a.Ranges, st, opt)
 
-	egress := drip.NewEgress(cfg.Limits.DailyEgressBytes, func() time.Time { return opt.Now().UTC() })
+	// Counts bytes for /metrics only; there is no egress cap (operator decision).
+	egress := drip.NewEgress(0, func() time.Time { return opt.Now().UTC() })
 	dripper := drip.NewDripper(drip.Options{
 		ChunkBytes:  cfg.Drip.ChunkBytes,
 		Interval:    cfg.Drip.Interval,

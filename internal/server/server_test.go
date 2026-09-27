@@ -83,12 +83,10 @@ func (l *fakeLimiter) Release(netip.Addr, uint32) { l.mu.Lock(); l.active--; l.m
 func (l *fakeLimiter) Active() int                { l.mu.Lock(); defer l.mu.Unlock(); return l.active }
 
 type fakeEgress struct {
-	mu       sync.Mutex
-	n        int64
-	exceeded bool
+	mu sync.Mutex
+	n  int64
 }
 
-func (e *fakeEgress) Exceeded() bool { e.mu.Lock(); defer e.mu.Unlock(); return e.exceeded }
 func (e *fakeEgress) Add(n int64)    { e.mu.Lock(); e.n += n; e.mu.Unlock() }
 func (e *fakeEgress) Today() int64   { e.mu.Lock(); defer e.mu.Unlock(); return e.n }
 
@@ -249,21 +247,6 @@ func TestMazeOverLimitServesFast(t *testing.T) {
 	}
 }
 
-func TestMazeEgressCap(t *testing.T) {
-	r := newRig(t)
-	r.egr.exceeded = true
-	w := r.do("GET", "/lawn/x", "203.0.113.7", "ua")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "closed") || r.drip.drips+r.drip.fasts != 0 {
-		t.Fatalf("code=%d body=%q", w.Code, w.Body.String())
-	}
-	if !r.log.reqs[0].IsViolation || r.log.reqs[0].Dripped {
-		t.Fatal("capped request must still be logged as a violation")
-	}
-	if r.srv.Metrics.EgressCapped.Load() != 1 {
-		t.Fatal("metric not incremented")
-	}
-}
-
 func TestMethodNotAllowedAndHead(t *testing.T) {
 	r := newRig(t)
 	if w := r.do("POST", "/lawn/x", "", "ua"); w.Code != 405 {
@@ -388,11 +371,8 @@ func TestMazeEndReasonsAndHeaders(t *testing.T) {
 	r.do("GET", "/lawn/b", "203.0.113.7", "Bot/1")
 	r.lim.allow = true
 	r.do("HEAD", "/lawn/c", "203.0.113.7", "Bot/1")
-	r.egr.exceeded = true
-	r.do("GET", "/lawn/d", "203.0.113.7", "Bot/1")
-	r.egr.exceeded = false
 	r.do("GET", "/", "203.0.113.7", "Bot/1")
-	for i, want := range []string{"complete", "shed", "head", "egress_cap", ""} {
+	for i, want := range []string{"complete", "shed", "head", ""} {
 		if got := r.log.reqs[i].EndReason; got != want {
 			t.Errorf("request %d (%s): end_reason %q, want %q", i, r.log.reqs[i].Path, got, want)
 		}

@@ -30,7 +30,6 @@ type Limits struct {
 	MaxConnsGlobal   int   `yaml:"max_conns_global"`
 	MaxConnsPerASN   int   `yaml:"max_conns_per_asn"`
 	MaxConnsPerIP    int   `yaml:"max_conns_per_ip"`
-	DailyEgressBytes int64 `yaml:"daily_egress_bytes"`
 }
 
 // Session controls report-time session derivation.
@@ -108,7 +107,7 @@ func Default() Config {
 		CorpusDir:       "./corpus",
 		CrawlersFile:    "./config/crawlers.yaml",
 		Drip:            Drip{ChunkBytes: 16, Interval: time.Second, MaxDuration: 10 * time.Minute, Adaptive: true, AdaptiveFactor: 0.8},
-		Limits:          Limits{MaxConnsGlobal: 5000, MaxConnsPerASN: 200, MaxConnsPerIP: 20, DailyEgressBytes: 5368709120},
+		Limits:          Limits{MaxConnsGlobal: 5000, MaxConnsPerASN: 200, MaxConnsPerIP: 20},
 		Session:         Session{Gap: 10 * time.Minute},
 		Shame:           Shame{RebuildInterval: 5 * time.Minute, BlocklistMinViolations: 50},
 		Retention:       Retention{RawRequestsDays: 90},
