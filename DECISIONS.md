@@ -171,3 +171,18 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **Migration 2 adds `end_reason`, `referer`, `accept`, `accept_language` and `accept_encoding` to `requests`.**
   - `end_reason` is NULL outside `/lawn/`. Dripped responses use the drip outcome (`complete` / `cutoff` / `client_gone` / `write_error`); undripped ones use `shed` / `egress_cap` / `head`.
   - Headers are truncated (512 / 256 / 128 / 128 bytes), used for analysis only, and never published, so §8 is unaffected.
+
+## All visitors, well-behaved bots, new-bot detection (follow-up)
+
+- **No egress cap (operator decision).** `limits.daily_egress_bytes`, the closed-for-the-day page and the `egress_cap` end reason are removed. Bytes are still counted for `/metrics`. An old config that sets the key still loads, since unknown keys are ignored.
+- **No Vultr DDoS protection (operator decision).** Application connection caps are the only protection; accepted.
+- **Every visitor is classified and gets a reverse-DNS lookup, not only violators.** Well-behaved bots need identity labels, and a PTR name (e.g. `crawl-1.newbot.example`) is often the first clue to a new crawler. The lookup is off the hot path (classifier workers) and cached for the identity TTL (7 d). A clean "no PTR" is stored as `''`; DNS failures are retried.
+- **PTR names are stored unconfirmed in `hosts`.** They are a lead for a human, not a verification; forward-confirmed rDNS for known crawlers stays in `identities`. They are never published.
+- **Migration 3 adds `header_names` (sorted client header names, proxy-added ones excluded, ≤ 512 B), `proto` and `tls` to `requests`.** Which headers a client sends, plus its HTTP and TLS versions, fingerprints the software. Header order would be better still, but Go's `http.Header` doesn't keep it.
+- **Client HTTP and TLS versions come from Caddy (`header_up X-Lawn-Client-Proto`/`X-Lawn-Client-TLS`), read only from trusted peers.** The app sees HTTP/1.1 from Caddy. `header_up` overwrites any client value; verified against a real Caddy.
+- **Caddy's proxy transport uses `compression off`.** Without it, Caddy adds `Accept-Encoding: gzip` for clients that sent none, which polluted the `accept_encoding` column added in migration 2. Found and fixed while verifying the placeholders.
+- **`daily_visits` rolls up EVERY visitor per (day, ip, ua), in the same transaction as `daily_aggregates`.** Counts are requests, robots.txt fetches, bait-page views and violations. Compliant bots keep their history past the 90-day raw retention.
+- **`lawn bots` is private; the public page shows only what §8 allows.** The CLI shows PTR names, IPs and header fingerprints for the operator.
+- **"Bot-like" signals:** the UA names a bot or HTTP library, the client fetched robots.txt, entered /lawn/, sent no Accept-Language (on rows where headers were captured), or has a crawler-looking PTR. `--all` lifts the filter.
+- **Product token = the UA's self-declared bot/library name.** Browser-looking UAs with bot signals are grouped by ASN, which is how headless scrapers show up.
+- **"New" = the group's earliest UA was first seen (raw requests or `daily_visits`) within the last 7 days.**
