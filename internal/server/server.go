@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/boydj/getoffmyfuckinglawn.com/internal/drip"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/logstore"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/maze"
 )
@@ -28,9 +29,9 @@ type PageRenderer interface {
 	EntryURLs(n int) []string
 }
 
-// Dripper writes a body slowly (Drip) or at once (Fast).
+// Dripper writes a body slowly (DripWith) or at once (Fast).
 type Dripper interface {
-	Drip(ctx context.Context, w http.ResponseWriter, body []byte, seed uint64) (int64, error)
+	DripWith(ctx context.Context, w http.ResponseWriter, body []byte, seed uint64, plan drip.Plan) (int64, drip.Outcome, error)
 	Fast(w http.ResponseWriter, body []byte) (int64, error)
 }
 
@@ -72,8 +73,9 @@ type Deps struct {
 	Limiter   Limiter
 	Egress    Egress
 	Logger    Logger
-	Observer  Observer  // may be nil
-	ASN       ASNLookup // may be nil; replace later with SetASN
+	Observer  Observer       // may be nil
+	ASN       ASNLookup      // may be nil; replace later with SetASN
+	Patience  *drip.Patience // adaptive per-client drip budget; nil = fixed max_duration
 	Trusted   []netip.Prefix
 	PublicDir string
 	Home      []byte // pre-rendered homepage
@@ -142,6 +144,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Method:    r.Method,
 		Path:      truncate(r.URL.RequestURI(), 1024),
 		Depth:     -1,
+		// Fingerprinting aids, stored for analysis only (never published).
+		Referer:        truncate(r.Header.Get("Referer"), 512),
+		Accept:         truncate(r.Header.Get("Accept"), 256),
+		AcceptLanguage: truncate(r.Header.Get("Accept-Language"), 128),
+		AcceptEncoding: truncate(r.Header.Get("Accept-Encoding"), 128),
 	}
 	var sent int64
 	status := http.StatusOK
@@ -159,7 +166,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		route = routeLawn
 		rec.IsViolation = true
 		rec.Depth = maze.Depth(path)
-		sent, rec.Dripped = s.serveMaze(w, r, ip, asn, start)
+		sent, rec.Dripped, rec.EndReason = s.serveMaze(w, r, ip, asn, ua, start)
 		if s.d.Observer != nil && ip.IsValid() {
 			s.d.Observer.Observe(rec.IP, ua)
 		}
@@ -209,9 +216,19 @@ func (s *Server) logRobots(f logstore.RobotsFetch) {
 	}
 }
 
+// End reasons for maze requests that were not dripped. Dripped ones use
+// drip.Outcome names (complete, cutoff, client_gone, write_error).
+const (
+	endShed      = "shed"       // over a connection cap: tiny page, no drip
+	endEgressCap = "egress_cap" // daily egress cap reached
+	endHead      = "head"       // HEAD request: headers only
+)
+
 // serveMaze renders the page up front into a pooled buffer, then drips it
-// unless a limit is hit. Returns bytes sent and whether it was dripped.
-func (s *Server) serveMaze(w http.ResponseWriter, r *http.Request, ip netip.Addr, asn uint32, start time.Time) (int64, bool) {
+// unless a limit is hit. The link block goes out at once; the rest is
+// trickled within the client's budget (adaptive, see drip.Patience).
+// Returns bytes sent, whether it was dripped, and why it ended.
+func (s *Server) serveMaze(w http.ResponseWriter, r *http.Request, ip netip.Addr, asn uint32, ua string, start time.Time) (int64, bool, string) {
 	h := w.Header()
 	h.Set("Cache-Control", "no-store")
 	h.Set("X-Robots-Tag", "noindex, nofollow")
@@ -219,12 +236,12 @@ func (s *Server) serveMaze(w http.ResponseWriter, r *http.Request, ip netip.Addr
 
 	if s.d.Egress.Exceeded() {
 		s.Metrics.EgressCapped.Add(1)
-		return s.writeSmall(w, http.StatusOK, "text/html; charset=utf-8", egressCapPage, r), false
+		return s.writeSmall(w, http.StatusOK, "text/html; charset=utf-8", egressCapPage, r), false, endEgressCap
 	}
 
 	if r.Method == http.MethodHead {
 		w.WriteHeader(http.StatusOK)
-		return 0, false
+		return 0, false, endHead
 	}
 	if !ip.IsValid() || !s.d.Limiter.Acquire(ip, asn) {
 		// Load shedding: a tiny static page, no render, no drip (SPEC.md
@@ -233,7 +250,7 @@ func (s *Server) serveMaze(w http.ResponseWriter, r *http.Request, ip netip.Addr
 		h.Set("Content-Length", strconv.Itoa(len(shedPage)))
 		w.WriteHeader(http.StatusOK)
 		n, _ := s.d.Dripper.Fast(w, shedPage)
-		return n, false
+		return n, false, endShed
 	}
 	defer s.d.Limiter.Release(ip, asn)
 
@@ -244,10 +261,16 @@ func (s *Server) serveMaze(w http.ResponseWriter, r *http.Request, ip netip.Addr
 	// Headers go out immediately; the body is chunked and trickled.
 	w.WriteHeader(http.StatusOK)
 	if err := http.NewResponseController(w).Flush(); err != nil {
-		return 0, true
+		s.Metrics.observeDrip(drip.WriteFailed)
+		return 0, true, drip.WriteFailed.String()
 	}
-	n, _ := s.d.Dripper.Drip(r.Context(), w, body, uint64(start.UnixNano()))
-	return n, true
+	key := drip.KeyFor(ip, asn, ua)
+	plan := drip.Plan{Lead: maze.LeadLen(body), MaxDuration: s.d.Patience.Budget(key)}
+	began := s.d.Now()
+	n, outcome, _ := s.d.Dripper.DripWith(r.Context(), w, body, uint64(start.UnixNano()), plan)
+	s.d.Patience.Observe(key, s.d.Now().Sub(began), outcome)
+	s.Metrics.observeDrip(outcome)
+	return n, true, outcome.String()
 }
 
 func (s *Server) writeSmall(w http.ResponseWriter, status int, ctype string, body []byte, r *http.Request) int64 {

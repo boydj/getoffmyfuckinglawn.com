@@ -86,24 +86,74 @@ func NewDripper(opt Options, clock Clock, egress *Egress) *Dripper {
 	return &Dripper{opt: opt, clock: clock, egress: egress}
 }
 
-// Drip writes body to w in chunks of ChunkBytes every Interval ± Jitter,
-// flushing after every chunk. The first chunk is written immediately.
-//
-// It stops as soon as ctx is done (client disconnect; returns ctx.Err())
-// or a write/flush fails (returns that error). Once MaxDuration has elapsed
-// since the call began, the remainder is written in one go. Drip does not
-// set headers or status: the caller has already done so and flushed them.
-// Every byte written is added to the egress counter. seed feeds a
-// per-connection PRNG for the jitter. Drip does not allocate per chunk.
+// Outcome says how a dripped response ended.
+type Outcome uint8
+
+const (
+	// Completed: the whole body was dripped within the time budget.
+	Completed Outcome = iota
+	// CutOff: the budget ran out and the remainder was written at once.
+	CutOff
+	// ClientGone: the client disconnected (ctx done) before the end.
+	ClientGone
+	// WriteFailed: a write or flush failed.
+	WriteFailed
+)
+
+var outcomeNames = [...]string{"complete", "cutoff", "client_gone", "write_error"}
+
+// String returns the name logged as the request's end_reason.
+func (o Outcome) String() string {
+	if int(o) < len(outcomeNames) {
+		return outcomeNames[o]
+	}
+	return "unknown"
+}
+
+// Plan tunes one response.
+type Plan struct {
+	// Lead bytes are written at once, before dripping starts, so a client
+	// sees the start of the page (for a maze page: its links) immediately.
+	Lead int
+	// MaxDuration overrides Options.MaxDuration for this response when > 0.
+	MaxDuration time.Duration
+}
+
+// Drip is DripWith with no lead and the configured MaxDuration.
 func (d *Dripper) Drip(ctx context.Context, w http.ResponseWriter, body []byte, seed uint64) (int64, error) {
+	n, _, err := d.DripWith(ctx, w, body, seed, Plan{})
+	return n, err
+}
+
+// DripWith writes body to w in chunks of ChunkBytes every Interval ± Jitter,
+// flushing after every chunk. The first write (plan.Lead bytes, or one
+// chunk if the lead is smaller) happens immediately.
+//
+// It stops as soon as ctx is done (client disconnect: ClientGone,
+// ctx.Err()) or a write/flush fails (WriteFailed, that error). Once the
+// time budget (plan.MaxDuration, else Options.MaxDuration) has elapsed
+// since the call began, the remainder is written in one go (CutOff). It
+// does not set headers or status: the caller has already done so and
+// flushed them. Every byte written is added to the egress counter. seed
+// feeds a per-connection PRNG for the jitter. It does not allocate per
+// chunk.
+func (d *Dripper) DripWith(ctx context.Context, w http.ResponseWriter, body []byte, seed uint64, plan Plan) (int64, Outcome, error) {
 	if d.opt.Interval <= 0 {
-		return d.Fast(w, body)
+		n, err := d.Fast(w, body)
+		if err != nil {
+			return n, WriteFailed, err
+		}
+		return n, Completed, nil
 	}
 	rc := http.NewResponseController(w)
 	pcg := rand.NewPCG(seed, 0x9e3779b97f4a7c15)
+	budget := d.opt.MaxDuration
+	if plan.MaxDuration > 0 {
+		budget = plan.MaxDuration
+	}
 	var deadline time.Time
-	if d.opt.MaxDuration > 0 {
-		deadline = d.clock.Now().Add(d.opt.MaxDuration)
+	if budget > 0 {
+		deadline = d.clock.Now().Add(budget)
 	}
 	var timer Timer
 	defer func() {
@@ -112,27 +162,32 @@ func (d *Dripper) Drip(ctx context.Context, w http.ResponseWriter, body []byte, 
 		}
 	}()
 
+	outcome := Completed
 	var written int64
 	for off := 0; off < len(body); {
 		if err := ctx.Err(); err != nil {
-			return written, err
+			return written, ClientGone, err
 		}
 		end := min(off+d.opt.ChunkBytes, len(body))
+		if off == 0 && plan.Lead > end {
+			end = min(plan.Lead, len(body))
+		}
 		var now time.Time
 		if !deadline.IsZero() {
 			now = d.clock.Now()
 			if !now.Before(deadline) {
 				end = len(body) // out of patience: finish the page quickly
+				outcome = CutOff
 			}
 		}
 		n, err := w.Write(body[off:end])
 		written += int64(n)
 		d.egress.Add(int64(n))
 		if err != nil {
-			return written, err
+			return written, WriteFailed, err
 		}
 		if err := rc.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
-			return written, err
+			return written, WriteFailed, err
 		}
 		off = end
 		if off >= len(body) {
@@ -150,11 +205,11 @@ func (d *Dripper) Drip(ctx context.Context, w http.ResponseWriter, body []byte, 
 		}
 		select {
 		case <-ctx.Done():
-			return written, ctx.Err()
+			return written, ClientGone, ctx.Err()
 		case <-timer.C():
 		}
 	}
-	return written, nil
+	return written, outcome, nil
 }
 
 // jittered returns Interval scaled by a uniform factor in [1-J, 1+J].

@@ -191,6 +191,12 @@ func TestIntegrationCrawlerWalk(t *testing.T) {
 	if n := count(`SELECT COUNT(*) FROM requests WHERE ip='203.0.113.7' AND is_violation=1 AND dripped=1 AND asn=64500 AND ts_end >= ts_start`); n != 50 {
 		t.Errorf("bot violations logged: %d", n)
 	}
+	if n := count(`SELECT COUNT(*) FROM requests WHERE ip='203.0.113.7' AND is_violation=1 AND end_reason='complete'`); n != 50 {
+		t.Errorf("bot requests with end_reason=complete: %d, want 50", n)
+	}
+	if n := count(`SELECT COUNT(*) FROM requests WHERE is_violation=0 AND end_reason IS NOT NULL`); n != 0 {
+		t.Errorf("non-maze requests must have NULL end_reason, got %d", n)
+	}
 	if n := count(`SELECT MAX(depth) FROM requests WHERE ip='203.0.113.7'`); n != 49 {
 		t.Errorf("max depth %d, want 49", n)
 	}

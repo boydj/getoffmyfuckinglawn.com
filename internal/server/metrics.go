@@ -8,6 +8,8 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+
+	"github.com/boydj/getoffmyfuckinglawn.com/internal/drip"
 )
 
 type route int
@@ -35,6 +37,13 @@ type Metrics struct {
 	EgressCapped atomic.Uint64
 	BytesSent    atomic.Uint64
 	LogDropped   atomic.Uint64
+	DripEnds     [4]atomic.Uint64 // by drip.Outcome
+}
+
+func (m *Metrics) observeDrip(o drip.Outcome) {
+	if int(o) < len(m.DripEnds) {
+		m.DripEnds[o].Add(1)
+	}
 }
 
 func (m *Metrics) observe(r route, violation, dripped bool, sent int64) {
@@ -96,6 +105,10 @@ func (m *MetricsRegistry) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	counter("lawn_egress_capped_total", "Maze requests answered with the closed page after the daily egress cap.", mt.EgressCapped.Load())
 	counter("lawn_bytes_sent_total", "Response body bytes sent.", mt.BytesSent.Load())
 	counter("lawn_log_dropped_total", "Log records dropped because the writer queue was full.", mt.LogDropped.Load())
+	fmt.Fprintf(b, "# HELP lawn_drip_end_total Dripped maze responses by how they ended.\n# TYPE lawn_drip_end_total counter\n")
+	for o := drip.Completed; int(o) < len(mt.DripEnds); o++ {
+		fmt.Fprintf(b, "lawn_drip_end_total{reason=%q} %d\n", o.String(), mt.DripEnds[o].Load())
+	}
 	gauge := func(name, help string, v float64) {
 		fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s gauge\n%s %g\n", name, help, name, name, v)
 	}

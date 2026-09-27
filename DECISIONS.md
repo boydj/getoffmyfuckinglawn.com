@@ -156,3 +156,18 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **The `lawn` binary is patched through CI signals, not on the host.** `govulncheck` runs against go.mod's `toolchain` (what `make build-linux` uses) on every push and weekly on a schedule; Dependabot covers Go modules (daily, per the operator's config) and Actions (weekly). The host never builds Go.
 - **`make patch-status`** gives a read-only, one-screen view: pending updates, running vs. installed kernel, reboot needed, recent unattended-upgrades runs, services needing restart, timers and failed units.
 - **Stay on Debian 12 under LTS (security support until 2028-06-30); no move to Debian 13.** The operator's call. LTS fixes ship through `bookworm-security`, which unattended-upgrades already covers. Revisit before mid-2028.
+
+## Depth and diagnostics (follow-up after launch)
+
+- **Maze pages put their link block right after the `<h1>` (in a `<nav>`), and the drip sends everything through `</nav>` at once.** At 16 B/s the links used to arrive ~4 minutes into the page (median byte 3,682). Real crawlers time out long before that, so every bot stayed at depth 0. §5.2 says headers go out immediately; sending the ~1.6 KB lead too is a deliberate deviation, and the remaining ~3 KB of text still drips.
+- **Adaptive drip budget (`drip.adaptive`, default on).** Deviates from §5.2's single fixed `max_duration`: a client never seen giving up still gets the full 10 minutes. Details:
+  - **Budget:** once a client hangs up after *t*, its later responses are budgeted `adaptive_factor` × *t* (0.8), floored at 250 ms, so it gets complete pages and follows links.
+  - **Probing:** each response it waits out raises the estimate by 2%, so a noisy low sample recovers and the budget creeps back toward the real timeout.
+  - **Why:** a bot that times out at 30 s is held ~24 s per page across many pages, rather than 30 s once.
+- **Adaptive key = (ASN, user agent), or (/24 or /48, user agent) when the ASN is unknown.** Crawlers rotate IPs within a network far more often than they change user agent.
+  - Memory is bounded: UA truncated to 256 bytes, 100k entries, 24 h TTL.
+  - Only clients seen giving up are tracked.
+  - State is in memory only; a restart relearns within one page per client.
+- **Migration 2 adds `end_reason`, `referer`, `accept`, `accept_language` and `accept_encoding` to `requests`.**
+  - `end_reason` is NULL outside `/lawn/`. Dripped responses use the drip outcome (`complete` / `cutoff` / `client_gone` / `write_error`); undripped ones use `shed` / `egress_cap` / `head`.
+  - Headers are truncated (512 / 256 / 128 / 128 bytes), used for analysis only, and never published, so §8 is unaffected.

@@ -127,8 +127,11 @@ func (g *Generator) Render(buf *bytes.Buffer, path string) {
 	buf.WriteString(pageHeadEnd)
 	buf.Write(st.title)
 	buf.WriteString("</h1>\n")
+	// Links first: a crawler reading the drip sees where to go next within
+	// the lead (sent at once, see LeadLen) instead of minutes into the body.
+	buf.Write(st.links.Bytes())
 
-	reserved := st.links.Len() + len(pageTail)
+	reserved := len(pageTail)
 	textStart := buf.Len()
 	textEnd := start + target - reserved
 	// limit is the last byte text may reach, leaving room for "</p>\n".
@@ -161,8 +164,20 @@ func (g *Generator) Render(buf *bytes.Buffer, path string) {
 		}
 		buf.WriteString("</p>\n")
 	}
-	buf.Write(st.links.Bytes())
 	buf.WriteString(pageTail)
+}
+
+// navEnd closes the link block that follows the page heading.
+const navEnd = "</nav>\n"
+
+// LeadLen returns how many leading bytes of a rendered page to send at
+// once: everything through the link block. 0 if page has none.
+func LeadLen(page []byte) int {
+	i := bytes.Index(page, []byte(navEnd))
+	if i < 0 {
+		return 0
+	}
+	return i + len(navEnd)
 }
 
 // sentence writes one Markov sentence. The sentence is cut short (and
@@ -199,7 +214,7 @@ func (g *Generator) sentence(buf *bytes.Buffer, r *rand.Rand, first bool, limit 
 func (g *Generator) renderLinks(st *renderState, r *rand.Rand, childDepth int) {
 	lb := &st.links
 	lb.Reset()
-	lb.WriteString("<h2>")
+	lb.WriteString("<nav>\n<h2>")
 	lb.WriteString(linkHeadings[r.IntN(len(linkHeadings))])
 	lb.WriteString("</h2>\n<ul>\n")
 	n := minLinks + r.IntN(maxLinks-minLinks+1)
@@ -221,6 +236,7 @@ func (g *Generator) renderLinks(st *renderState, r *rand.Rand, childDepth int) {
 		lb.WriteString("</a></li>\n")
 	}
 	lb.WriteString("</ul>\n")
+	lb.WriteString(navEnd)
 }
 
 func (g *Generator) writeSegment(lb *bytes.Buffer, st *renderState, r *rand.Rand) {

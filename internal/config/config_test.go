@@ -49,6 +49,9 @@ limits: { max_conns_global: 10, max_conns_per_asn: 5, max_conns_per_ip: 2, daily
 	if c.Listen != "0.0.0.0:1234" || c.DBPath != "/tmp/x.db" {
 		t.Fatalf("got %+v", c)
 	}
+	if !c.Drip.Adaptive || c.Drip.AdaptiveFactor != 0.8 {
+		t.Fatalf("adaptive defaults lost: %+v", c.Drip)
+	}
 	if c.Drip.ChunkBytes != 32 || c.Drip.Interval != 250*time.Millisecond || c.Drip.MaxDuration != 2*time.Minute {
 		t.Fatalf("drip: %+v", c.Drip)
 	}
@@ -75,6 +78,12 @@ func TestInvalid(t *testing.T) {
 	}
 	if _, err := Load(p, env(nil)); err == nil {
 		t.Fatal("expected error for bad proxy")
+	}
+	if err := os.WriteFile(p, []byte("drip: { adaptive_factor: 1.5 }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(p, env(nil)); err == nil {
+		t.Fatal("expected error for adaptive_factor > 1")
 	}
 	if err := os.WriteFile(p, []byte("drip: { chunk_bytes: 0 }\n"), 0o600); err != nil {
 		t.Fatal(err)

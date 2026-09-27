@@ -17,6 +17,12 @@ type Drip struct {
 	ChunkBytes  int           `yaml:"chunk_bytes"`
 	Interval    time.Duration `yaml:"interval"`
 	MaxDuration time.Duration `yaml:"max_duration"`
+	// Adaptive learns how long each client (ASN or /24 + user agent) waits
+	// before giving up, and finishes its later pages just before that, so
+	// crawlers with short timeouts get whole pages and follow links.
+	Adaptive bool `yaml:"adaptive"`
+	// AdaptiveFactor scales the observed give-up time into the next budget.
+	AdaptiveFactor float64 `yaml:"adaptive_factor"`
 }
 
 // Limits are the self-protection caps.
@@ -101,7 +107,7 @@ func Default() Config {
 		PublicDir:       "/var/lib/lawn/public",
 		CorpusDir:       "./corpus",
 		CrawlersFile:    "./config/crawlers.yaml",
-		Drip:            Drip{ChunkBytes: 16, Interval: time.Second, MaxDuration: 10 * time.Minute},
+		Drip:            Drip{ChunkBytes: 16, Interval: time.Second, MaxDuration: 10 * time.Minute, Adaptive: true, AdaptiveFactor: 0.8},
 		Limits:          Limits{MaxConnsGlobal: 5000, MaxConnsPerASN: 200, MaxConnsPerIP: 20, DailyEgressBytes: 5368709120},
 		Session:         Session{Gap: 10 * time.Minute},
 		Shame:           Shame{RebuildInterval: 5 * time.Minute, BlocklistMinViolations: 50},
@@ -193,6 +199,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Drip.Interval < 0 || c.Drip.MaxDuration < 0 {
 		errs = append(errs, errors.New("drip durations must be >= 0"))
+	}
+	if c.Drip.AdaptiveFactor <= 0 || c.Drip.AdaptiveFactor > 1 {
+		errs = append(errs, errors.New("drip.adaptive_factor must be in (0, 1]"))
 	}
 	if c.Limits.MaxConnsGlobal <= 0 || c.Limits.MaxConnsPerASN <= 0 || c.Limits.MaxConnsPerIP <= 0 {
 		errs = append(errs, errors.New("limits.max_conns_* must be > 0"))
