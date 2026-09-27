@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily reboot-if-needed check for lawn's host
+
+[Timer]
+# Maintenance window, just after unattended-upgrades' own 04:30 reboot slot.
+# Not Persistent: a missed run must not trigger a reboot right after boot.
+OnCalendar=*-*-* 04:45:00 UTC
+Persistent=false
+
+[Install]
+WantedBy=timers.target

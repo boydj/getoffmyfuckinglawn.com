@@ -5,7 +5,7 @@
 # can be brought up with `make deploy` alone.
 #
 # Expects the systemd units already in /etc/systemd/system and asn-refresh.sh,
-# backup.sh and Caddyfile in /usr/local/lib/lawn.
+# backup.sh, reboot-check.sh and Caddyfile in /usr/local/lib/lawn.
 #
 # Env:
 #   LAWN_DOMAIN  site domain; written to /etc/lawn/caddy.env when set. Required
@@ -18,6 +18,9 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 export DEBIAN_FRONTEND=noninteractive
+# needrestart: only list during this script's own apt runs (no prompts, no
+# surprise restarts mid-deploy). Unattended upgrades use conf.d/lawn.conf ('a').
+export NEEDRESTART_MODE=l
 export HOME="${HOME:-/root}"
 LIB=/usr/local/lib/lawn
 LAWN_DOMAIN="${LAWN_DOMAIN:-}"
@@ -46,7 +49,7 @@ installed() {
 }
 
 # ---------------------------------------------------------------- packages
-pkgs=(ca-certificates curl gnupg sqlite3 unattended-upgrades)
+pkgs=(ca-certificates curl gnupg sqlite3 unattended-upgrades needrestart)
 missing=()
 for p in "${pkgs[@]}"; do
 	installed "$p" || missing+=("$p")
@@ -180,17 +183,34 @@ APT::Periodic::Unattended-Upgrade "1";
 APT::Periodic::AutocleanInterval "7";
 APT
 write_if_changed /etc/apt/apt.conf.d/52lawn-unattended-upgrades 0644 <<'APT' || true
-// Managed by lawn host-setup.sh. Appends to the distro's default origins
-// (security updates) in 50unattended-upgrades.
+// Managed by lawn host-setup.sh. Merged with 50unattended-upgrades; listed
+// explicitly so the image's defaults can't silently narrow them.
 Unattended-Upgrade::Origins-Pattern {
+	// Debian security updates, point releases, and stable-updates (tzdata etc.).
+	"origin=Debian,codename=${distro_codename},label=Debian";
+	"origin=Debian,codename=${distro_codename},label=Debian-Security";
+	"origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+	"origin=Debian,codename=${distro_codename}-updates";
 	// Caddy from its official Cloudsmith repository.
 	"site=dl.cloudsmith.io";
 };
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
+// Reboot at 04:30 UTC when an upgrade asks for it, even with SSH sessions
+// open. lawn-reboot-check.timer (04:45) is the backstop for new kernels.
 Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
 Unattended-Upgrade::Automatic-Reboot-Time "04:30";
 APT
+# Restart services that still map replaced libraries (OpenSSL, libc, ...)
+# right after unattended upgrades, instead of waiting for a reboot.
+install -d -m 0755 /etc/needrestart/conf.d
+write_if_changed /etc/needrestart/conf.d/lawn.conf 0644 <<'NR' || true
+# Managed by lawn host-setup.sh.
+$nrconf{restart} = 'a';
+$nrconf{kernelhints} = 0;
+NR
 systemctl enable --quiet unattended-upgrades.service 2>/dev/null || true
+systemctl enable --quiet --now apt-daily.timer apt-daily-upgrade.timer
 
 # ------------------------------------------------------------ host firewall
 # Vultr's Debian/Ubuntu images ship with ufw enabled and only SSH allowed, so
@@ -210,7 +230,8 @@ systemctl daemon-reload
 # lawn.service is ConditionPathExists-gated on the binary, so enabling it
 # before the first deploy is harmless.
 systemctl enable --quiet lawn.service
-systemctl enable --quiet --now lawn-asn-refresh.timer lawn-verify-refresh.timer lawn-backup.timer
+systemctl enable --quiet --now lawn-asn-refresh.timer lawn-verify-refresh.timer lawn-backup.timer \
+	lawn-reboot-check.timer
 systemctl enable --quiet caddy.service
 if systemctl is-active --quiet caddy.service; then
 	systemctl reload caddy.service

@@ -147,3 +147,11 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 5. **The deploy workflow can't reach SSH by default.** GitHub-hosted runners aren't in `admin_cidrs`; add their ranges or use a self-hosted runner.
 6. **Backups stay on the box.** Copy them off-box if the history matters.
 - **host-setup opens 80/443 in ufw when ufw is active, and otherwise leaves ufw alone.** Vultr's Debian/Ubuntu images ship with ufw enabled and SSH-only, which silently dropped ACME challenges on the first real deploy. ufw stays on as defense in depth behind the Vultr firewall group.
+
+## Patching (follow-up)
+
+- **unattended-upgrades lists Debian's security, point-release and `-updates` origins explicitly (plus Caddy's repo).** Vultr's image defaults can't silently narrow what gets patched.
+- **needrestart runs in automatic mode (`$nrconf{restart} = 'a'`).** Services holding a replaced library are restarted right after the upgrade instead of waiting for a reboot. `lawn` and Caddy are static Go binaries, so they're unaffected.
+- **Reboots:** unattended-upgrades' `Automatic-Reboot` fires at 04:30 UTC, even with users logged in. `lawn-reboot-check.timer` at 04:45 is a backstop that also reboots for a newer installed kernel, and refuses a second reboot for the same kernel so a bad bootloader default can't cause a daily reboot loop. The timer is not `Persistent`, so a missed run never reboots right after boot.
+- **The `lawn` binary is patched through CI signals, not on the host.** `govulncheck` runs against go.mod's `toolchain` (what `make build-linux` uses) on every push and weekly on a schedule; Dependabot covers Go modules and Actions. The host never builds Go.
+- **`make patch-status`** gives a read-only, one-screen view: pending updates, running vs. installed kernel, reboot needed, recent unattended-upgrades runs, services needing restart, timers and failed units.

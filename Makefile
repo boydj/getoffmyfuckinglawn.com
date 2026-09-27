@@ -34,8 +34,8 @@ SSH_OPTS    := -p $(SSH_PORT) -o StrictHostKeyChecking=accept-new $(if $(SSH_KEY
 # Local dev (`make run`): throwaway state under data/dev (gitignored).
 DEV_DIR := data/dev
 
-.PHONY: help test vet lint fmt build build-linux infra plan validate deploy \
-	logs ssh destroy loadtest run clean require-host
+.PHONY: help test vet vulncheck lint fmt build build-linux infra plan validate deploy \
+	logs ssh patch-status destroy loadtest run clean require-host
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "; printf "Usage: make <target>\n\n"} \
@@ -49,6 +49,13 @@ test: ## Unit + integration tests (race detector when cgo is available)
 vet: ## go vet + staticcheck
 	$(GO) vet -tags '$(TEST_TAGS)' ./...
 	staticcheck -tags '$(TEST_TAGS)' ./...
+
+# govulncheck must judge the standard library of the toolchain that builds the
+# release binary, i.e. go.mod's toolchain line, not whatever go is on PATH.
+GO_TOOLCHAIN := $(shell $(GO) mod edit -json 2>/dev/null | sed -n 's/.*"Toolchain": "\(.*\)".*/\1/p')
+
+vulncheck: ## govulncheck: known vulnerabilities in the Go toolchain and modules we call
+	GOTOOLCHAIN=$(or $(GO_TOOLCHAIN),auto) $(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 lint: vet ## vet + gofmt, shellcheck, tofu fmt
 	@out="$$(gofmt -l $$(git ls-files -co --exclude-standard '*.go'))"; \
@@ -104,6 +111,9 @@ logs: require-host ## Follow the lawn journal on the host
 
 ssh: require-host ## Shell on the host
 	ssh $(SSH_OPTS) $(DEPLOY_USER)@$(DEPLOY_HOST)
+
+patch-status: require-host ## Host patch state: pending updates, kernel, reboot needed, failed units
+	ssh $(SSH_OPTS) $(DEPLOY_USER)@$(DEPLOY_HOST) /usr/local/lib/lawn/patch-status.sh
 
 ## ---------------------------------------------------------------- Dev
 
