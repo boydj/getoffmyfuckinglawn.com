@@ -223,7 +223,7 @@ ssh -L 9090:127.0.0.1:9090 root@<ip>                 # then curl localhost:9090/
 
 `make patch-status` shows the current state. `systemctl --failed` on the host surfaces a stuck reboot check.
 
-**The `lawn` binary** is patched by redeploying. CI runs `govulncheck` against the Go toolchain pinned in `go.mod` on every push and weekly, and a new Go vulnerability shows up as a failed scheduled run in GitHub's email. Dependabot opens weekly PRs for Go modules and Actions versions. To patch: bump the `toolchain` line in `go.mod` (or merge the Dependabot PR), then run `make deploy`.
+**The `lawn` binary** is patched by redeploying. CI runs `govulncheck` against the Go toolchain pinned in `go.mod` on every push and weekly, and a new Go vulnerability shows up as a failed scheduled run in GitHub's email. Dependabot opens PRs for Go modules (daily) and Actions versions (weekly). To patch: bump the `toolchain` line in `go.mod` (or merge the Dependabot PR), then run `make deploy`.
 
 **Retention.** Raw request rows older than `retention.raw_requests_days` (90) are rolled into `daily_aggregates` by the running server.
 
