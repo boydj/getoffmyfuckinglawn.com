@@ -27,7 +27,9 @@ Clients that respect `robots.txt`, search engines included, are never trapped an
 - Text comes from an order-2 Markov chain trained on three public-domain Project Gutenberg novels in `corpus/`.
 - Each page is 2–8 KB, with 3–8 paragraphs and 10–20 links to deeper `/lawn/<token>` URLs. The token encodes the depth.
 
-**The drip.** Headers go out immediately. The body follows in 16-byte chunks every second (±30% jitter), flushed each time, until 10 minutes have passed; then the rest goes out at once.
+**The drip.** Headers and the page's link block go out immediately. The rest of the body follows in 16-byte chunks every second (±30% jitter), flushed each time, until the client's budget runs out; then the rest goes out at once.
+- **Budget:** 10 minutes for a client never seen giving up.
+- **Adaptive:** once a client (ASN, or /24 or /48 when the ASN is unknown, plus user agent) has hung up after *t* seconds, its later pages finish at 0.8 × *t*. A crawler with a 30 s timeout then gets complete pages in about 24 s and keeps following links deeper, instead of timing out at depth 0 on every page.
 
 **Limits**
 - Beyond 5000 connections in total, 200 per ASN, or 20 per IP, pages are served fast instead of dripped, and still logged. Load shedding never returns a 5xx.
@@ -224,6 +226,27 @@ ssh -L 9090:127.0.0.1:9090 root@<ip>                 # then curl localhost:9090/
 `make patch-status` shows the current state. `systemctl --failed` on the host surfaces a stuck reboot check.
 
 **The `lawn` binary** is patched by redeploying. CI runs `govulncheck` against the Go toolchain pinned in `go.mod` on every push and weekly, and a new Go vulnerability shows up as a failed scheduled run in GitHub's email. Dependabot opens PRs for Go modules (daily) and Actions versions (weekly). To patch: bump the `toolchain` line in `go.mod` (or merge the Dependabot PR), then run `make deploy`.
+
+**Why requests ended.** Every `/lawn/` row records an `end_reason`:
+- `complete`: dripped to the end.
+- `cutoff`: budget reached, remainder sent at once.
+- `client_gone`: the client hung up.
+- `write_error`
+- `shed`: over a connection cap.
+- `egress_cap`
+- `head`
+
+`referer`, `accept`, `accept_language` and `accept_encoding` are stored too, for analysis only; they are never published. Per-crawler summary:
+
+```sh
+sqlite3 -readonly /var/lib/lawn/lawn.db "
+SELECT substr(user_agent,1,40) ua, end_reason, COUNT(*) n,
+       ROUND(AVG(ts_end-ts_start)/1000.0,1) avg_s, ROUND(AVG(bytes_sent)) avg_bytes, MAX(depth) depth
+FROM requests WHERE is_violation=1 AND ts_start > (strftime('%s','now')-86400)*1000
+GROUP BY 1,2 ORDER BY n DESC LIMIT 30;"
+```
+
+`/metrics` also exposes `lawn_drip_end_total{reason=...}` and `lawn_patience_tracked`.
 
 **Retention.** Raw request rows older than `retention.raw_requests_days` (90) are rolled into `daily_aggregates` by the running server.
 

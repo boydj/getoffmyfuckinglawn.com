@@ -48,6 +48,7 @@ type App struct {
 	lastBuild  atomic.Int64 // unix seconds of last successful shame build
 	buildMu    sync.Mutex
 	asnEntries atomic.Int64
+	patience   *drip.Patience
 }
 
 func (o *Options) defaults() {
@@ -108,6 +109,15 @@ func New(cfg config.Config, opt Options) (*App, error) {
 		Jitter:      0.3,
 	}, opt.Clock, egress)
 	limiter := drip.NewLimiter(cfg.Limits.MaxConnsGlobal, cfg.Limits.MaxConnsPerASN, cfg.Limits.MaxConnsPerIP)
+	var patience *drip.Patience
+	if cfg.Drip.Adaptive {
+		patience = drip.NewPatience(drip.PatienceOptions{
+			Max:    cfg.Drip.MaxDuration,
+			Factor: cfg.Drip.AdaptiveFactor,
+			Now:    opt.Now,
+		})
+	}
+	a.patience = patience
 
 	home, err := server.RenderHome(web.Templates(cfg.TemplatesDir), server.HomeData{
 		RobotsTxt: server.RobotsTxt,
@@ -123,6 +133,7 @@ func New(cfg config.Config, opt Options) (*App, error) {
 		Pages:     gen,
 		Dripper:   dripper,
 		Limiter:   limiter,
+		Patience:  patience,
 		Egress:    egress,
 		Logger:    a.Writer,
 		Observer:  a.Classifier,
@@ -356,6 +367,7 @@ func (a *App) registerMetrics() {
 	g("lawn_classifier_queue_depth", "Identities waiting for verification.", "gauge", func() float64 { return float64(a.Classifier.Stats().Queued) })
 	g("lawn_classifier_dropped_total", "Identities not queued because the queue was full.", "counter", func() float64 { return float64(a.Classifier.Stats().Dropped) })
 	g("lawn_classifier_classified_total", "Identities classified.", "counter", func() float64 { return float64(a.Classifier.Stats().Classified) })
+	g("lawn_patience_tracked", "Clients with a learned drip budget (adaptive drip).", "gauge", func() float64 { return float64(a.patience.Len()) })
 	g("lawn_asn_ranges", "Ranges in the loaded ASN table.", "gauge", func() float64 { return float64(a.asnEntries.Load()) })
 	g("lawn_shame_last_build_timestamp_seconds", "Unix time of the last successful shame build.", "gauge", func() float64 { return float64(a.lastBuild.Load()) })
 }

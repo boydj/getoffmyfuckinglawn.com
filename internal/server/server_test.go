@@ -15,13 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/boydj/getoffmyfuckinglawn.com/internal/drip"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/logstore"
 )
 
 type fakePages struct{}
 
 func (fakePages) Render(buf *bytes.Buffer, path string) {
-	buf.WriteString("<html><title>" + path + "</title><body>" + strings.Repeat("x", 100) + "</body></html>")
+	buf.WriteString("<html><title>" + path + "</title><body><nav><a href=\"/lawn/next\">next</a></nav>\n" + strings.Repeat("x", 100) + "</body></html>")
 }
 func (fakePages) EntryURLs(n int) []string {
 	out := make([]string, n)
@@ -32,19 +33,23 @@ func (fakePages) EntryURLs(n int) []string {
 }
 
 type fakeDripper struct {
-	mu     sync.Mutex
-	drips  int
-	fasts  int
-	egress *fakeEgress
+	mu      sync.Mutex
+	drips   int
+	fasts   int
+	egress  *fakeEgress
+	plans   []drip.Plan
+	outcome drip.Outcome // what DripWith reports
 }
 
-func (d *fakeDripper) Drip(_ context.Context, w http.ResponseWriter, body []byte, _ uint64) (int64, error) {
+func (d *fakeDripper) DripWith(_ context.Context, w http.ResponseWriter, body []byte, _ uint64, plan drip.Plan) (int64, drip.Outcome, error) {
 	d.mu.Lock()
 	d.drips++
+	d.plans = append(d.plans, plan)
+	o := d.outcome
 	d.mu.Unlock()
 	n, err := w.Write(body)
 	d.egress.Add(int64(n))
-	return int64(n), err
+	return int64(n), o, err
 }
 func (d *fakeDripper) Fast(w http.ResponseWriter, body []byte) (int64, error) {
 	d.mu.Lock()
@@ -354,5 +359,72 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMazeEndReasonsAndHeaders(t *testing.T) {
+	r := newRig(t)
+	req := httptest.NewRequest("GET", "/lawn/a", nil)
+	req.RemoteAddr = "127.0.0.1:1"
+	req.Header.Set("X-Forwarded-For", "203.0.113.7")
+	req.Header.Set("User-Agent", "Bot/1")
+	req.Header.Set("Referer", "https://example.test/sitemap.xml")
+	req.Header.Set("Accept", "text/html")
+	req.Header.Set("Accept-Language", "en-US")
+	req.Header.Set("Accept-Encoding", "gzip, br")
+	r.srv.ServeHTTP(httptest.NewRecorder(), req)
+	rec := r.log.reqs[0]
+	if rec.EndReason != "complete" || rec.Referer != "https://example.test/sitemap.xml" || rec.Accept != "text/html" ||
+		rec.AcceptLanguage != "en-US" || rec.AcceptEncoding != "gzip, br" {
+		t.Fatalf("rec %+v", rec)
+	}
+	// The lead is the page through </nav>.
+	wantLead := strings.Index("<html><title>/lawn/a</title><body><nav><a href=\"/lawn/next\">next</a></nav>\n", "</nav>\n") + len("</nav>\n")
+	if p := r.drip.plans[0]; p.Lead != wantLead {
+		t.Fatalf("lead %d, want %d", p.Lead, wantLead)
+	}
+
+	r.lim.allow = false
+	r.do("GET", "/lawn/b", "203.0.113.7", "Bot/1")
+	r.lim.allow = true
+	r.do("HEAD", "/lawn/c", "203.0.113.7", "Bot/1")
+	r.egr.exceeded = true
+	r.do("GET", "/lawn/d", "203.0.113.7", "Bot/1")
+	r.egr.exceeded = false
+	r.do("GET", "/", "203.0.113.7", "Bot/1")
+	for i, want := range []string{"complete", "shed", "head", "egress_cap", ""} {
+		if got := r.log.reqs[i].EndReason; got != want {
+			t.Errorf("request %d (%s): end_reason %q, want %q", i, r.log.reqs[i].Path, got, want)
+		}
+	}
+	if r.srv.Metrics.DripEnds[drip.Completed].Load() != 1 {
+		t.Error("drip end metric not counted")
+	}
+}
+
+func TestAdaptiveBudget(t *testing.T) {
+	r := newRig(t)
+	r.srv.d.Patience = drip.NewPatience(drip.PatienceOptions{Max: 10 * time.Minute, Factor: 0.8})
+	r.drip.outcome = drip.ClientGone // the bot hangs up on every page
+	r.srv.SetASN(fakeASN{"203.0.113.7": 64500, "203.0.113.99": 64500})
+
+	r.do("GET", "/lawn/1", "203.0.113.7", "Bot/1")
+	r.do("GET", "/lawn/2", "203.0.113.99", "Bot/1") // same ASN, rotated IP
+	r.do("GET", "/lawn/3", "198.51.100.1", "Bot/1") // no ASN known: its own /24 bucket
+	r.do("GET", "/lawn/4", "203.0.113.7", "OtherBot/2")
+
+	want := []time.Duration{
+		10 * time.Minute,       // unknown client: full budget
+		250 * time.Millisecond, // learned: gave up after 250ms (fake clock), 0.8x floored at 250ms
+		10 * time.Minute,       // different network bucket
+		10 * time.Minute,       // different UA
+	}
+	for i, w := range want {
+		if got := r.drip.plans[i].MaxDuration; got != w {
+			t.Errorf("request %d budget %v, want %v", i+1, got, w)
+		}
+	}
+	if r.log.reqs[0].EndReason != "client_gone" {
+		t.Errorf("end reason %q", r.log.reqs[0].EndReason)
 	}
 }

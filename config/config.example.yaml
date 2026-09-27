@@ -37,6 +37,13 @@ drip:
   interval: 1s
   # Longest a single connection is held before the page is finished quickly.
   max_duration: 10m
+  # Learn how long each client (ASN or /24, plus user agent) waits before
+  # hanging up, and finish its later pages just before that, so crawlers
+  # with short timeouts get whole pages and follow the links deeper.
+  # Clients never seen giving up keep max_duration.
+  adaptive: true
+  # Next page's budget = observed give-up time x this factor (0 < f <= 1).
+  adaptive_factor: 0.8
 
 limits:
   # Concurrent dripping connections, overall. Over any limit: fast page, still logged.

@@ -41,6 +41,12 @@ type Request struct {
 	BytesSent   int64
 	Dripped     bool
 	Status      int
+	// Added by migration 2. "" = NULL.
+	EndReason      string // how a /lawn/ response ended (see schema.go)
+	Referer        string
+	Accept         string
+	AcceptLanguage string
+	AcceptEncoding string
 }
 
 // RobotsFetch is one row of robots_fetches.
@@ -152,8 +158,9 @@ func (s *Store) InsertRequests(ctx context.Context, rows []Request) error {
 	}
 	defer tx.Rollback()
 	st, err := tx.PrepareContext(ctx, `INSERT INTO requests
-	 (ts_start, ts_end, ip, asn, asn_org, user_agent, method, path, depth, is_violation, bytes_sent, dripped, status)
-	 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	 (ts_start, ts_end, ip, asn, asn_org, user_agent, method, path, depth, is_violation, bytes_sent, dripped, status,
+	  end_reason, referer, accept, accept_language, accept_encoding)
+	 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -162,7 +169,8 @@ func (s *Store) InsertRequests(ctx context.Context, rows []Request) error {
 		r := &rows[i]
 		if _, err := st.ExecContext(ctx, r.TsStart, nullInt(r.TsEnd, r.TsEnd == 0), r.IP,
 			nullInt(int64(r.ASN), r.ASN == 0), nullStr(r.ASNOrg), r.UserAgent, r.Method, r.Path,
-			nullInt(int64(r.Depth), r.Depth < 0), b2i(r.IsViolation), r.BytesSent, b2i(r.Dripped), r.Status); err != nil {
+			nullInt(int64(r.Depth), r.Depth < 0), b2i(r.IsViolation), r.BytesSent, b2i(r.Dripped), r.Status,
+			nullStr(r.EndReason), nullStr(r.Referer), nullStr(r.Accept), nullStr(r.AcceptLanguage), nullStr(r.AcceptEncoding)); err != nil {
 			return fmt.Errorf("logstore: insert request: %w", err)
 		}
 	}

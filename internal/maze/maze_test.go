@@ -435,3 +435,30 @@ func BenchmarkLoadCorpus(b *testing.B) {
 		}
 	}
 }
+
+func TestLinksLeadThePage(t *testing.T) {
+	g := NewGenerator(testSecret, testChain(t))
+	for _, p := range append(g.EntryURLs(50), "/lawn/", "/lawn/archive/2019/x") {
+		var b bytes.Buffer
+		g.Render(&b, p)
+		page := b.Bytes()
+		lead := LeadLen(page)
+		if lead <= 0 || lead >= len(page) {
+			t.Fatalf("%s: lead %d of %d", p, lead, len(page))
+		}
+		inLead := bytes.Count(page[:lead], []byte(`href="/lawn/`))
+		if total := bytes.Count(page, []byte(`href="/lawn/`)); inLead != total || inLead < 10 {
+			t.Fatalf("%s: %d of %d links in the lead", p, inLead, total)
+		}
+		// The body text comes after the links, so the drip still has work.
+		if !bytes.Contains(page[lead:], []byte("<p>")) {
+			t.Fatalf("%s: no paragraphs after the lead", p)
+		}
+		if bytes.Index(page, []byte("<h1>")) > bytes.Index(page, []byte("<nav>")) {
+			t.Fatalf("%s: nav before heading", p)
+		}
+	}
+	if LeadLen([]byte("<p>no nav</p>")) != 0 {
+		t.Fatal("LeadLen without nav must be 0")
+	}
+}
