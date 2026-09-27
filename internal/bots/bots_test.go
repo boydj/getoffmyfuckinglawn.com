@@ -197,3 +197,60 @@ func TestHumanDur(t *testing.T) {
 		}
 	}
 }
+
+func TestFrontier(t *testing.T) {
+	s, cr, now := fixture(t)
+	ua := "FrontierBot/1.0"
+	base := now.Add(-time.Hour).UnixMilli()
+	sec := int64(1000)
+	lawn := func(ip, ua string, start, end int64, page, parent uint32) logstore.Request {
+		return logstore.Request{TsStart: base + start, TsEnd: base + end, IP: ip, UserAgent: ua, Method: "GET",
+			Path: "/lawn/p", Depth: 1, IsViolation: true, Dripped: true, PageID: page, ParentID: parent}
+	}
+	rows := []logstore.Request{
+		lawn("198.51.100.1", ua, 0, 60*sec, 100, 0),                 // parent, drips for 60s
+		lawn("198.51.100.2", ua, 10*sec, 70*sec, 101, 100),          // other IP, parent still open
+		lawn("198.51.100.1", ua, 90*sec, 150*sec, 102, 100),         // after the parent finished
+		lawn("198.51.100.1", ua, 20*sec, 80*sec, 103, 999),          // parent never fetched
+		lawn("198.51.100.1", ua, -10*sec, 50*sec, 104, 100),         // before the parent
+		lawn("198.51.100.3", "Other/1.0", 10*sec, 70*sec, 105, 100), // a different UA's parent
+	}
+	if err := s.InsertRequests(context.Background(), rows); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Collect(context.Background(), Options{DB: s.DB(), Crawlers: cr, Since: 24 * time.Hour, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := byToken(r)["FrontierBot"]
+	if b == nil || b.Children != 4 || b.Follows != 2 || b.Open != 1 {
+		t.Fatalf("frontier: %+v", b)
+	}
+	if o := byToken(r)["Other"]; o == nil || o.Children != 1 || o.Follows != 0 {
+		t.Errorf("other UA must not match FrontierBot's parent: %+v", o)
+	}
+	var out bytes.Buffer
+	Write(&out, r, WriteOptions{Details: 10})
+	if txt := out.String(); !strings.Contains(txt, "4 child fetches; 2 followed a parent fetch by this UA, 1 while the parent was still dripping (50%)") {
+		t.Errorf("report:\n%s", txt)
+	}
+
+	// The parent lookup must use the page_id index, not scan requests.
+	var plan strings.Builder
+	rs, err := s.DB().Query(`EXPLAIN QUERY PLAN SELECT 1 FROM requests p WHERE p.page_id = ? AND p.user_agent IS ?`, 1, ua)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rs.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rs.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(detail + "\n")
+	}
+	rs.Close()
+	if !strings.Contains(plan.String(), "idx_req_page") {
+		t.Errorf("parent lookup does not use idx_req_page:\n%s", plan.String())
+	}
+}

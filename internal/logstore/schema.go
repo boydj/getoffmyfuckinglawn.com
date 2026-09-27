@@ -102,4 +102,13 @@ CREATE TABLE daily_visits (
   PRIMARY KEY (day, ip, user_agent)
 );
 `,
+	// 4: maze page identity, so analysis can tell whether a client fetches
+	// a page's children while that page is still dripping (frontier
+	// amplification). Both are 32-bit ids derived from the page's HMAC;
+	// NULL outside /lawn/ and, for parent_id, on entry pages.
+	`
+ALTER TABLE requests ADD COLUMN page_id INTEGER;
+ALTER TABLE requests ADD COLUMN parent_id INTEGER;
+CREATE INDEX idx_req_page ON requests(page_id) WHERE page_id IS NOT NULL;
+`,
 }

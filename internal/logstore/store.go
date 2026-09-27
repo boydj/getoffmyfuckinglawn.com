@@ -51,6 +51,9 @@ type Request struct {
 	HeaderNames string // sorted client header names, comma-separated
 	Proto       string // client HTTP version (from the proxy)
 	TLS         string // "version cipher alpn" (from the proxy)
+	// Added by migration 4. 0 = NULL.
+	PageID   uint32 // maze page id (maze.Generator.IDs)
+	ParentID uint32 // id of the page whose link led here
 }
 
 // Host is one row of hosts: reverse DNS for an IP.
@@ -170,8 +173,9 @@ func (s *Store) InsertRequests(ctx context.Context, rows []Request) error {
 	defer tx.Rollback()
 	st, err := tx.PrepareContext(ctx, `INSERT INTO requests
 	 (ts_start, ts_end, ip, asn, asn_org, user_agent, method, path, depth, is_violation, bytes_sent, dripped, status,
-	  end_reason, referer, accept, accept_language, accept_encoding, header_names, proto, tls)
-	 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	  end_reason, referer, accept, accept_language, accept_encoding, header_names, proto, tls,
+	  page_id, parent_id)
+	 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -182,7 +186,8 @@ func (s *Store) InsertRequests(ctx context.Context, rows []Request) error {
 			nullInt(int64(r.ASN), r.ASN == 0), nullStr(r.ASNOrg), r.UserAgent, r.Method, r.Path,
 			nullInt(int64(r.Depth), r.Depth < 0), b2i(r.IsViolation), r.BytesSent, b2i(r.Dripped), r.Status,
 			nullStr(r.EndReason), nullStr(r.Referer), nullStr(r.Accept), nullStr(r.AcceptLanguage), nullStr(r.AcceptEncoding),
-			nullStr(r.HeaderNames), nullStr(r.Proto), nullStr(r.TLS)); err != nil {
+			nullStr(r.HeaderNames), nullStr(r.Proto), nullStr(r.TLS),
+			nullInt(int64(r.PageID), r.PageID == 0), nullInt(int64(r.ParentID), r.ParentID == 0)); err != nil {
 			return fmt.Errorf("logstore: insert request: %w", err)
 		}
 	}

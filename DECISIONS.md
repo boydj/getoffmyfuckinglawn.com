@@ -202,3 +202,22 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **Rows are ordered most recently seen first; the 24h/7d/30d windows use raw rows, and all-time adds `daily_visits`.** Same rules as the wall.
 - **Collection is a single streaming scan: a flat UNION ALL over requests, `daily_visits` and `daily_aggregates`, ordered by (ip, ua).** Memory is bounded to one client pair at a time. The lead added `idx_req_ip_ua_ts` to migration 3 (not yet deployed anywhere) so the scan and the rollup walk rows in index order. The whole scan costs about 1.3× the old one on a 1M-row test.
 - **`lawn stats` gains a "Well-behaved" section that shows network labels only.**
+
+## Second-report follow-ups
+
+- **User-initiated fetchers:** `crawlers.yaml` gains `user_triggered` and `robots_exempt` (the second requires the first).
+  - **Exempt:** ChatGPT-User (OpenAI's crawler page: "robots.txt rules may not apply"; the primary page was unreachable from the sandbox, so it is quoted via press coverage, with a TODO to re-check) and Perplexity-User.
+  - **Not exempt:** Claude-User is user-triggered, but Anthropic states it honours robots.txt.
+  - **On the wall:** a VERIFIED exempt fetcher's `/lawn/` hits get their own "User-initiated fetchers" section, excluded from Top ASNs, read-the-rules and the blocklist, and shown only as /24 or /48. They still count in totals and `feed.json` because the time was really held.
+  - **Spoofed claims:** they stay in the Hall of Liars.
+  - **Why:** presenting a person's one-off request as a crawler ignoring the rules is the easiest claim to dispute.
+- **The log keeps the path plus query parameter NAMES only (`/x?q=secret&a=1` → `/x?a&q`).** The Referer likewise keeps scheme, host, path and parameter names, with no values, userinfo or fragment. Values can carry tokens or personal data, and nothing needs them.
+- **Per-prefix limits:** there is now a /24 (IPv4) or /48 (IPv6) level in the concurrency limiter (`limits.max_conns_per_prefix`, default 50) and a per-prefix token bucket for new `/lawn/` requests (`limits.prefix_rate` 10/s, `prefix_burst` 100). Over either limit, the request gets the existing tiny "lawn is full" page, logged with `end_reason` `shed` or `rate_limited`, never a 5xx.
+  - **Why prefixes:** rotating addresses inside one network, or firing many short requests, used to slip past the per-IP cap.
+  - **Why not 5/s:** an adaptively dripped crawler with 20 parallel connections on ~4 s pages already makes ~5 req/s, and a tighter limit would clip the depth #9 was for. 10/s still stops floods.
+  - **Implementation:** stdlib only (no `x/time/rate`), with memory bounded at 100k prefixes. `0` turns either limit off; the load-test script does, because it simulates thousands of clients from a few /24s.
+- **Parent tracking (frontier amplification):** child links now embed a 4-byte id of the page that linked them (the first 4 bytes of HMAC(secret, path || "\x01id")); entry links carry none.
+  - **Logged:** `page_id` and `parent_id` columns (migration 4, partial index on `page_id`), NULL outside `/lawn/`. An id of 0 is stored as NULL; the 1-in-2^32 collision is ignored.
+  - **Measured:** `lawn bots` matches each child to an earlier fetch of its parent by the same user agent, across IPs because distributed crawlers split work between addresses. It counts how many of those started before the parent response ended (`OPEN`). Parents that retention has rolled up leave children unmatched, so run it on recent windows.
+  - **Compatibility:** child URLs grow by about 7 characters. Old child URLs (MAC only) and entry URLs still decode and render the same page, with no parent.
+  - **Why ids and not full paths:** a 4-byte id keeps URLs short and rows small, and the HMAC means clients cannot forge a matching id.

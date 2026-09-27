@@ -30,6 +30,12 @@ type Limits struct {
 	MaxConnsGlobal int `yaml:"max_conns_global"`
 	MaxConnsPerASN int `yaml:"max_conns_per_asn"`
 	MaxConnsPerIP  int `yaml:"max_conns_per_ip"`
+	// MaxConnsPerPrefix caps drips per /24 (IPv4) or /48 (IPv6); 0 = off.
+	MaxConnsPerPrefix int `yaml:"max_conns_per_prefix"`
+	// PrefixRate / PrefixBurst: token bucket of new /lawn/ requests per
+	// /24 or /48 (per second, burst); PrefixRate 0 = off.
+	PrefixRate  float64 `yaml:"prefix_rate"`
+	PrefixBurst int     `yaml:"prefix_burst"`
 }
 
 // Session controls report-time session derivation.
@@ -107,7 +113,7 @@ func Default() Config {
 		CorpusDir:       "./corpus",
 		CrawlersFile:    "./config/crawlers.yaml",
 		Drip:            Drip{ChunkBytes: 16, Interval: time.Second, MaxDuration: 10 * time.Minute, Adaptive: true, AdaptiveFactor: 0.8},
-		Limits:          Limits{MaxConnsGlobal: 5000, MaxConnsPerASN: 200, MaxConnsPerIP: 20},
+		Limits:          Limits{MaxConnsGlobal: 5000, MaxConnsPerASN: 200, MaxConnsPerIP: 20, MaxConnsPerPrefix: 50, PrefixRate: 10, PrefixBurst: 100},
 		Session:         Session{Gap: 10 * time.Minute},
 		Shame:           Shame{RebuildInterval: 5 * time.Minute, BlocklistMinViolations: 50},
 		Retention:       Retention{RawRequestsDays: 90},
@@ -204,6 +210,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Limits.MaxConnsGlobal <= 0 || c.Limits.MaxConnsPerASN <= 0 || c.Limits.MaxConnsPerIP <= 0 {
 		errs = append(errs, errors.New("limits.max_conns_* must be > 0"))
+	}
+	if c.Limits.MaxConnsPerPrefix < 0 || c.Limits.PrefixRate < 0 || c.Limits.PrefixBurst < 0 {
+		errs = append(errs, errors.New("limits.max_conns_per_prefix, prefix_rate and prefix_burst must be >= 0 (0 = off)"))
 	}
 	if c.Session.Gap <= 0 {
 		errs = append(errs, errors.New("session.gap must be > 0"))

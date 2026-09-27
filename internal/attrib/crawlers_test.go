@@ -118,3 +118,50 @@ func TestParseCrawlersErrors(t *testing.T) {
 		t.Error("missing file accepted")
 	}
 }
+
+func TestUserTriggeredAndExempt(t *testing.T) {
+	cs, err := ParseCrawlers([]byte(`
+- org: A
+  name: Fetcher-User
+  ua_patterns: ['Fetcher-User']
+  verify: none
+  user_triggered: true
+  robots_exempt: true
+- org: A
+  name: Crawler
+  ua_patterns: ['CrawlerBot']
+  verify: none
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !RobotsExemptUA(cs, "x Fetcher-User/1.0") || RobotsExemptUA(cs, "CrawlerBot/2") || RobotsExemptUA(cs, "curl/8") {
+		t.Error("RobotsExemptUA")
+	}
+	if _, err := ParseCrawlers([]byte(`
+- org: A
+  name: B
+  ua_patterns: ['B']
+  verify: none
+  robots_exempt: true
+`)); err == nil {
+		t.Error("robots_exempt without user_triggered must be rejected")
+	}
+}
+
+func TestRepoCrawlersExemptions(t *testing.T) {
+	cs, err := LoadCrawlers("../../config/crawlers.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ua, want := range map[string]bool{
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ChatGPT-User/1.0; +https://openai.com/bot":                   true,
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; Perplexity-User/1.0; +https://perplexity.ai/perplexity-user)": true,
+		"Mozilla/5.0 (compatible; Claude-User/1.0; +Claude-User@anthropic.com)":                                                       false, // honours robots.txt
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; GPTBot/1.2; +https://openai.com/gptbot":                      false,
+	} {
+		if got := RobotsExemptUA(cs, ua); got != want {
+			t.Errorf("%s: exempt=%v want %v", ua, got, want)
+		}
+	}
+}

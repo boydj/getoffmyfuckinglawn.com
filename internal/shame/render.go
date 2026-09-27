@@ -166,15 +166,16 @@ type tableView struct {
 }
 
 type indexView struct {
-	Generated    string
-	All          Metrics
-	Windows      []winView
-	Verified     tableView
-	Liars        tableView
-	Unverifiable tableView
-	ASNs         tableView
-	ReadRules    tableView
-	RobotsTxt    string
+	Generated     string
+	All           Metrics
+	Windows       []winView
+	Verified      tableView
+	Liars         tableView
+	Unverifiable  tableView
+	UserTriggered tableView
+	ASNs          tableView
+	ReadRules     tableView
+	RobotsTxt     string
 }
 
 type sparkView struct {
@@ -232,15 +233,16 @@ func renderIndex(t *template.Template, r *Report, robots string) ([]byte, error)
 	var buf bytes.Buffer
 	for _, n := range indexCaps {
 		v := indexView{
-			Generated:    genTime(r.Generated),
-			All:          r.Totals[WAll],
-			Windows:      windows(r.Totals),
-			Verified:     table("Org", r.Verified, n, "org/"),
-			Liars:        table("Claimed org", r.Liars, n, "org/"),
-			Unverifiable: table("Claimed org", r.Unverifiable, n, "org/"),
-			ASNs:         table("Network", r.ASNs, n, "org/"),
-			ReadRules:    table("Name", r.ReadRules, n, "org/"),
-			RobotsTxt:    robots,
+			Generated:     genTime(r.Generated),
+			All:           r.Totals[WAll],
+			Windows:       windows(r.Totals),
+			Verified:      table("Org", r.Verified, n, "org/"),
+			Liars:         table("Claimed org", r.Liars, n, "org/"),
+			Unverifiable:  table("Claimed org", r.Unverifiable, n, "org/"),
+			UserTriggered: table("Org", r.UserTriggered, n, "org/"),
+			ASNs:          table("Network", r.ASNs, n, "org/"),
+			ReadRules:     table("Name", r.ReadRules, n, "org/"),
+			RobotsTxt:     robots,
 		}
 		buf.Reset()
 		if err := t.ExecuteTemplate(&buf, "shame-index", v); err != nil {
@@ -269,6 +271,8 @@ func orgNote(g *Group) string {
 		return "User agent matched " + g.Name + "'s crawler and the source addresses passed " + g.Name + "'s published verification. These requests fetched paths disallowed by our robots.txt."
 	case logstore.StatusSpoofed:
 		return "User agent claimed to be " + g.Name + ", but the source addresses failed " + g.Name + "'s published verification. The requests came from " + ASNLabel(g.ASN, g.ASNOrg) + ". Only the claim is " + g.Name + "'s; the traffic is not attributed to " + g.Name + "."
+	case StatusUserTriggered:
+		return "User agent matched " + g.Name + "'s user-initiated fetcher and the source addresses passed " + g.Name + "'s published verification. " + g.Name + " states that robots.txt may not apply to fetches a person asks for, so these requests for disallowed paths are listed here for completeness and are not ranked as violations."
 	case logstore.StatusUnverifiable:
 		return "User agent claims to be " + g.Name + ". We found no published way to verify that claim, so it is not confirmed; the networks the requests came from are listed below."
 	}

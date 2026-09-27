@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,6 +24,14 @@ type fakePages struct{}
 
 func (fakePages) Render(buf *bytes.Buffer, path string) {
 	buf.WriteString("<html><title>" + path + "</title><body><nav><a href=\"/lawn/next\">next</a></nav>\n" + strings.Repeat("x", 100) + "</body></html>")
+}
+func (fakePages) IDs(path string) (page, parent uint32, hasParent bool) {
+	// Deterministic stand-ins: page = len(path); a "/lawn/next" link
+	// claims parent 1.
+	if path == "/lawn/next" {
+		return uint32(len(path)), 1, true
+	}
+	return uint32(len(path)), 0, false
 }
 func (fakePages) EntryURLs(n int) []string {
 	out := make([]string, n)
@@ -213,8 +222,11 @@ func TestRoutes(t *testing.T) {
 		if rec.IsViolation != want {
 			t.Errorf("%s: is_violation=%v", rec.Path, rec.IsViolation)
 		}
-		if !want && rec.Depth != -1 {
-			t.Errorf("%s: depth must be NULL outside /lawn/", rec.Path)
+		if !want && (rec.Depth != -1 || rec.PageID != 0 || rec.ParentID != 0) {
+			t.Errorf("%s: depth and page ids must be NULL outside /lawn/", rec.Path)
+		}
+		if want && rec.PageID != uint32(len(rec.Path)) {
+			t.Errorf("%s: page_id %d", rec.Path, rec.PageID)
 		}
 	}
 	if len(r.log.robots) != 1 || r.log.robots[0].IP != "203.0.113.7" {
@@ -459,5 +471,86 @@ func TestHeaderNamesBounded(t *testing.T) {
 	}
 	if n := headerNames(h, false); len(n) > 512 {
 		t.Fatalf("header_names not truncated: %d bytes", len(n))
+	}
+}
+
+func TestLogPathDropsQueryValues(t *testing.T) {
+	cases := map[string]string{
+		"/lawn/abc":                          "/lawn/abc",
+		"/":                                  "/",
+		"/robots.txt?x=1":                    "/robots.txt?x",
+		"/lawn/a?token=SECRET&a=1&token=2&b": "/lawn/a?a&b&token",
+		"/search?q=alice%40example.com":      "/search?q",
+		"/p%20q?=v&k":                        "/p%20q?k",
+	}
+	for in, want := range cases {
+		u, err := url.ParseRequestURI(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := logPath(u); got != want {
+			t.Errorf("logPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+	u, _ := url.ParseRequestURI("/x?" + strings.Repeat("k=v&", 1) + "a1&a2&a3&a4&a5&a6&a7&a8&a9&b1&b2&b3&b4&b5&b6&b7&b8&b9")
+	if got := logPath(u); !strings.HasSuffix(got, "…") || strings.Contains(got, "=v") {
+		t.Errorf("many keys should be capped: %q", got)
+	}
+	// End to end: the logged row never contains the value.
+	r := newRig(t)
+	r.do("GET", "/lawn/zz?session=hunter2", "203.0.113.7", "ua")
+	if p := r.log.reqs[0].Path; p != "/lawn/zz?session" || strings.Contains(p, "hunter2") {
+		t.Errorf("logged path %q", p)
+	}
+}
+
+func TestLogReferer(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                                 "",
+		"https://example.test/sitemap.xml": "https://example.test/sitemap.xml",
+		"https://search.test/q?query=secret#frag": "https://search.test/q?query",
+		"https://user:pw@host.test/":              "https://host.test/",
+		"mailto:someone@example.test":             "(unparsable)",
+		"/relative/path?x=1":                      "/relative/path?x",
+	} {
+		if got := logReferer(in); got != want {
+			t.Errorf("logReferer(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+type fakeRate struct{ allow bool }
+
+func (f fakeRate) Allow(netip.Addr) bool { return f.allow }
+
+func TestMazeRateLimited(t *testing.T) {
+	r := newRig(t)
+	r.srv.d.Rate = fakeRate{allow: false}
+	w := r.do("GET", "/lawn/x", "203.0.113.7", "ua")
+	rec := r.log.reqs[0]
+	if w.Code != 200 || rec.EndReason != "rate_limited" || rec.Dripped || !rec.IsViolation || r.drip.drips != 0 || r.lim.active != 0 {
+		t.Fatalf("code=%d rec=%+v drips=%d", w.Code, rec, r.drip.drips)
+	}
+	if !strings.Contains(w.Body.String(), "full") || r.srv.Metrics.RateLimited.Load() != 1 {
+		t.Error("rate-limited requests get the tiny page and are counted")
+	}
+	// Non-maze routes are never rate limited.
+	if w := r.do("GET", "/", "203.0.113.7", "ua"); w.Code != 200 || r.log.reqs[1].EndReason != "" {
+		t.Error("homepage must not be rate limited")
+	}
+}
+
+func TestMazeLogsParentID(t *testing.T) {
+	r := newRig(t)
+	r.do("GET", "/lawn/entry0", "203.0.113.7", "ua")
+	r.do("GET", "/lawn/next", "203.0.113.7", "ua")
+	if len(r.log.reqs) != 2 {
+		t.Fatalf("logged %d", len(r.log.reqs))
+	}
+	if e := r.log.reqs[0]; e.PageID == 0 || e.ParentID != 0 {
+		t.Errorf("entry: %+v", e)
+	}
+	if c := r.log.reqs[1]; c.PageID != uint32(len("/lawn/next")) || c.ParentID != 1 {
+		t.Errorf("child: page=%d parent=%d", c.PageID, c.ParentID)
 	}
 }

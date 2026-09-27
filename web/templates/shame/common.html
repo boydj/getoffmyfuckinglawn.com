@@ -15,6 +15,7 @@
 {{define "shame-legend"}}<dl>
 <dt>{{template "shame-badge" "verified"}}</dt><dd>User agent matched a known crawler and the source address passed that vendor's published verification (reverse DNS or published IP ranges). Only these rows show individual IPs.</dd>
 <dt>{{template "shame-badge" "spoofed"}}</dt><dd>User agent claimed a known crawler, but the source address failed that vendor's published verification. Grouped by the claimed name and the network the requests actually came from.</dd>
+<dt>{{template "shame-badge" "user_triggered"}}</dt><dd>A verified fetcher that acts on a person's request, whose vendor states robots.txt may not apply to it. Listed, not ranked; shown as a /24 or /48.</dd>
 <dt>{{template "shame-badge" "unverifiable"}}</dt><dd>User agent claims a known crawler whose vendor publishes no verification method we could find. Not confirmed; attributed by network.</dd>
 <dt>{{template "shame-badge" "anonymous"}}</dt><dd>No known crawler user agent. Attributed only to the network (ASN) the requests came from.</dd>
 </dl>

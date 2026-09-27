@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,12 +29,21 @@ const RobotsTxt = "User-agent: *\nDisallow: /lawn/\n"
 type PageRenderer interface {
 	Render(buf *bytes.Buffer, path string)
 	EntryURLs(n int) []string
+	// IDs returns path's page id and, when its URL carries one, the id of
+	// the page that linked to it. Logged so analysis can match a child
+	// fetch to its parent's request.
+	IDs(path string) (page, parent uint32, hasParent bool)
 }
 
 // Dripper writes a body slowly (DripWith) or at once (Fast).
 type Dripper interface {
 	DripWith(ctx context.Context, w http.ResponseWriter, body []byte, seed uint64, plan drip.Plan) (int64, drip.Outcome, error)
 	Fast(w http.ResponseWriter, body []byte) (int64, error)
+}
+
+// RateLimiter bounds how fast new /lawn/ requests may start.
+type RateLimiter interface {
+	Allow(ip netip.Addr) bool
 }
 
 // Limiter caps concurrent drips.
@@ -71,6 +81,7 @@ type Deps struct {
 	Pages     PageRenderer
 	Dripper   Dripper
 	Limiter   Limiter
+	Rate      RateLimiter // may be nil: no rate limit
 	Egress    Egress
 	Logger    Logger
 	Observer  Observer       // may be nil
@@ -140,10 +151,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ASNOrg:    asnOrg,
 		UserAgent: ua,
 		Method:    r.Method,
-		Path:      truncate(r.URL.RequestURI(), 1024),
+		Path:      logPath(r.URL),
 		Depth:     -1,
 		// Fingerprinting aids, stored for analysis only (never published).
-		Referer:        truncate(r.Header.Get("Referer"), 512),
+		Referer:        logReferer(r.Header.Get("Referer")),
 		Accept:         truncate(r.Header.Get("Accept"), 256),
 		AcceptLanguage: truncate(r.Header.Get("Accept-Language"), 128),
 		AcceptEncoding: truncate(r.Header.Get("Accept-Encoding"), 128),
@@ -173,6 +184,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		route = routeLawn
 		rec.IsViolation = true
 		rec.Depth = maze.Depth(path)
+		var hasParent bool
+		rec.PageID, rec.ParentID, hasParent = s.d.Pages.IDs(path)
+		if !hasParent {
+			rec.ParentID = 0
+		}
 		sent, rec.Dripped, rec.EndReason = s.serveMaze(w, r, ip, asn, ua, start)
 	case path == "/robots.txt":
 		route = routeRobots
@@ -228,8 +244,9 @@ func (s *Server) logRobots(f logstore.RobotsFetch) {
 // End reasons for maze requests that were not dripped. Dripped ones use
 // drip.Outcome names (complete, cutoff, client_gone, write_error).
 const (
-	endShed = "shed" // over a connection cap: tiny page, no drip
-	endHead = "head" // HEAD request: headers only
+	endShed = "shed"         // over a connection cap: tiny page, no drip
+	endHead = "head"         // HEAD request: headers only
+	endRate = "rate_limited" // prefix over its request rate: tiny page, no render
 )
 
 // serveMaze renders the page up front into a pooled buffer, then drips it
@@ -245,6 +262,13 @@ func (s *Server) serveMaze(w http.ResponseWriter, r *http.Request, ip netip.Addr
 	if r.Method == http.MethodHead {
 		w.WriteHeader(http.StatusOK)
 		return 0, false, endHead
+	}
+	if ip.IsValid() && s.d.Rate != nil && !s.d.Rate.Allow(ip) {
+		s.Metrics.RateLimited.Add(1)
+		h.Set("Content-Length", strconv.Itoa(len(shedPage)))
+		w.WriteHeader(http.StatusOK)
+		n, _ := s.d.Dripper.Fast(w, shedPage)
+		return n, false, endRate
 	}
 	if !ip.IsValid() || !s.d.Limiter.Acquire(ip, asn) {
 		// Load shedding: a tiny static page, no render, no drip (SPEC.md
@@ -376,4 +400,50 @@ func headerNames(h http.Header, viaProxy bool) string {
 	}
 	slices.Sort(names)
 	return truncate(strings.Join(names, ","), 512)
+}
+
+// logPath is what the log keeps of the request URL: the escaped path plus
+// the query parameter NAMES, never their values ("/x?q=secret&a=1" ->
+// "/x?a&q"). Values can carry tokens or personal data, and nothing here
+// needs them; the names still show how a client builds URLs.
+func logPath(u *url.URL) string {
+	p := u.EscapedPath()
+	if p == "" {
+		p = "/"
+	}
+	if u.RawQuery == "" {
+		return truncate(p, 1024)
+	}
+	var arr [16]string
+	keys := arr[:0]
+	for part := range strings.SplitSeq(u.RawQuery, "&") {
+		k, _, _ := strings.Cut(part, "=")
+		if k == "" || slices.Contains(keys, k) {
+			continue
+		}
+		if len(keys) == cap(arr) {
+			keys = append(keys, "…")
+			break
+		}
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return truncate(p+"?"+strings.Join(keys, "&"), 1024)
+}
+
+// logReferer keeps a Referer's scheme, host and path plus query parameter
+// names (as logPath does), dropping values and fragments.
+func logReferer(ref string) string {
+	if ref == "" {
+		return ""
+	}
+	u, err := url.Parse(ref)
+	if err != nil || (u.Scheme != "" && u.Host == "" && u.Opaque != "") {
+		return "(unparsable)"
+	}
+	origin := ""
+	if u.Host != "" {
+		origin = u.Scheme + "://" + u.Host
+	}
+	return truncate(origin+logPath(u), 512)
 }

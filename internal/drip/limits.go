@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
-// Limiter caps concurrent dripped connections globally, per ASN and per
-// client IP. It is safe for concurrent use.
+// Limiter caps concurrent dripped connections globally, per ASN, per
+// network prefix (/24 or /48; see WithPrefixCap) and per client IP. It is
+// safe for concurrent use.
 //
 // Semantics:
 //   - asn == 0 means "unknown ASN": the per-ASN cap is skipped for that
@@ -19,23 +20,45 @@ import (
 //     /64 and could otherwise rotate addresses to dodge the per-IP cap.
 //   - A cap <= 0 means unlimited.
 type Limiter struct {
-	global, perASN, perIP int32
+	global, perASN, perIP, perPrefix int32
 
-	mu     sync.Mutex
-	active atomic.Int32 // written under mu, read lock-free by Active
-	ips    map[netip.Addr]int32
-	asns   map[uint32]int32
+	mu       sync.Mutex
+	active   atomic.Int32 // written under mu, read lock-free by Active
+	ips      map[netip.Addr]int32
+	asns     map[uint32]int32
+	prefixes map[netip.Prefix]int32
 }
 
 // NewLimiter returns a Limiter with the given caps.
 func NewLimiter(global, perASN, perIP int) *Limiter {
 	return &Limiter{
-		global: clampCap(global),
-		perASN: clampCap(perASN),
-		perIP:  clampCap(perIP),
-		ips:    make(map[netip.Addr]int32),
-		asns:   make(map[uint32]int32),
+		global:    clampCap(global),
+		perASN:    clampCap(perASN),
+		perIP:     clampCap(perIP),
+		perPrefix: clampCap(0),
+		ips:       make(map[netip.Addr]int32),
+		asns:      make(map[uint32]int32),
+		prefixes:  make(map[netip.Prefix]int32),
 	}
+}
+
+// WithPrefixCap sets the per-prefix cap (/24 for IPv4, /48 for IPv6):
+// clients rotating addresses inside one network share it. <= 0 = unlimited.
+func (l *Limiter) WithPrefixCap(n int) *Limiter {
+	l.perPrefix = clampCap(n)
+	return l
+}
+
+// PrefixOf returns the /24 (IPv4) or /48 (IPv6) network of ip, the unit
+// for per-prefix limits.
+func PrefixOf(ip netip.Addr) netip.Prefix {
+	ip = ip.Unmap()
+	bits := 48
+	if ip.Is4() {
+		bits = 24
+	}
+	p, _ := ip.Prefix(bits)
+	return p
 }
 
 func clampCap(n int) int32 {
@@ -59,13 +82,16 @@ func ipKey(ip netip.Addr) netip.Addr {
 // Acquire takes a slot for (ip, asn). It returns false, holding nothing,
 // if any cap is already reached. Every true must be paired with Release.
 func (l *Limiter) Acquire(ip netip.Addr, asn uint32) bool {
-	k := ipKey(ip)
+	k, pk := ipKey(ip), PrefixOf(ip)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.active.Load() >= l.global {
 		return false
 	}
 	if asn != 0 && l.asns[asn] >= l.perASN {
+		return false
+	}
+	if l.prefixes[pk] >= l.perPrefix {
 		return false
 	}
 	if l.ips[k] >= l.perIP {
@@ -75,6 +101,7 @@ func (l *Limiter) Acquire(ip netip.Addr, asn uint32) bool {
 	if asn != 0 {
 		l.asns[asn]++
 	}
+	l.prefixes[pk]++
 	l.ips[k]++
 	return true
 }
@@ -94,6 +121,12 @@ func (l *Limiter) Release(ip netip.Addr, asn uint32) {
 		delete(l.ips, k)
 	} else {
 		l.ips[k] = n - 1
+	}
+	pk := PrefixOf(ip)
+	if p := l.prefixes[pk]; p <= 1 {
+		delete(l.prefixes, pk)
+	} else {
+		l.prefixes[pk] = p - 1
 	}
 	if asn != 0 {
 		if a := l.asns[asn]; a <= 1 {
@@ -115,6 +148,13 @@ func (l *Limiter) sizes() (ips, asns int) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return len(l.ips), len(l.asns)
+}
+
+// prefixCount reports the per-prefix map size (tests).
+func (l *Limiter) prefixCount() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.prefixes)
 }
 
 // Egress is a daily egress byte counter that resets at UTC midnight. It is

@@ -27,8 +27,12 @@
 <p class="lede">User agents naming a crawler whose vendor publishes no way to check it. We can't confirm who these are, so nothing here is presented as confirmed. See the network each came from on its page.</p>
 {{template "shame-table" .Unverifiable}}
 
+<h2 id="user-initiated">User-initiated fetchers</h2>
+<p class="lede">Verified fetchers that visit a page because a person asked an assistant to, and whose vendor states robots.txt may not apply to them. They did request disallowed paths, but they are listed here for completeness, not ranked as offenders, and never added to the blocklist.</p>
+{{template "shame-table" .UserTriggered}}
+
 <h2 id="asns">3. Top ASNs</h2>
-<p class="lede">Every violator, all statuses, added up by the network (ASN) the requests came from.</p>
+<p class="lede">Every violator, all statuses except user-initiated fetchers, added up by the network (ASN) the requests came from.</p>
 {{template "shame-table" .ASNs}}
 
 <h2 id="read-the-rules">4. Read the rules, ignored them</h2>

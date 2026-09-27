@@ -44,15 +44,23 @@ type Crawler struct {
 	Name     string
 	Patterns []*regexp.Regexp
 	Verify   VerifySpec
+	// UserTriggered: the vendor documents this agent as fetching a page
+	// because a person asked it to (not crawling on its own).
+	UserTriggered bool
+	// RobotsExempt: the vendor states robots.txt may not apply to it. Its
+	// verified /lawn/ hits are reported separately, not as violations.
+	RobotsExempt bool
 
 	static prefixSet // parsed Verify.CIDRs
 }
 
 type crawlerYAML struct {
-	Org        string     `yaml:"org"`
-	Name       string     `yaml:"name"`
-	UAPatterns []string   `yaml:"ua_patterns"`
-	Verify     VerifySpec `yaml:"verify"`
+	Org           string     `yaml:"org"`
+	Name          string     `yaml:"name"`
+	UAPatterns    []string   `yaml:"ua_patterns"`
+	Verify        VerifySpec `yaml:"verify"`
+	UserTriggered bool       `yaml:"user_triggered"`
+	RobotsExempt  bool       `yaml:"robots_exempt"`
 }
 
 // LoadCrawlers reads and validates a crawlers.yaml file.
@@ -92,7 +100,11 @@ func ParseCrawlers(b []byte) ([]Crawler, error) {
 }
 
 func buildCrawler(r crawlerYAML) (Crawler, error) {
-	c := Crawler{Org: strings.TrimSpace(r.Org), Name: strings.TrimSpace(r.Name), Verify: r.Verify}
+	c := Crawler{Org: strings.TrimSpace(r.Org), Name: strings.TrimSpace(r.Name), Verify: r.Verify,
+		UserTriggered: r.UserTriggered, RobotsExempt: r.RobotsExempt}
+	if c.RobotsExempt && !c.UserTriggered {
+		return c, errors.New("robots_exempt requires user_triggered (only user-initiated fetchers are exempt)")
+	}
 	if c.Org == "" || c.Name == "" {
 		return c, errors.New("org and name are required")
 	}
@@ -174,4 +186,12 @@ func RangeURLs(crawlers []Crawler) []string {
 		}
 	}
 	return out
+}
+
+// RobotsExemptUA reports whether ua claims a crawler whose vendor says
+// robots.txt may not apply to it. It says nothing about whether the claim
+// is true: callers must also require a verified identity.
+func RobotsExemptUA(crawlers []Crawler, ua string) bool {
+	c := MatchUA(crawlers, ua)
+	return c != nil && c.RobotsExempt
 }
