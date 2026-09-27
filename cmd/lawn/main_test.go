@@ -54,3 +54,10 @@ func TestBuildShameAndStats(t *testing.T) {
 		t.Fatal("stats should reject an unsupported window")
 	}
 }
+
+func TestVersion(t *testing.T) {
+	var out, errb bytes.Buffer
+	if err := run([]string{"version"}, &out, &errb); err != nil || strings.TrimSpace(out.String()) != version {
+		t.Fatalf("version: %v %q", err, out.String())
+	}
+}
