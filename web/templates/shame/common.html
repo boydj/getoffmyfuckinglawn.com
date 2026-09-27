@@ -21,9 +21,12 @@
 </dl>
 <p class="note">Networks other than verified crawlers are shown as a /24 (IPv4) or /48 (IPv6) at most. Hours held = total time our server spent serving disallowed pages to them. Pages = disallowed fetches. Sessions = runs of requests with gaps under {{gap}}.</p>{{end}}
 
-{{define "shame-rows-head"}}<tr><th>{{.}}</th><th class="l">Status</th><th>Hours 24h</th><th>Hours 7d</th><th>Hours 30d</th><th>Hours all</th><th>Pages</th><th>Max depth</th><th>Bytes</th><th>Sessions</th><th>First seen</th><th>Last seen</th></tr>{{end}}
+{{define "shame-rows-head"}}<tr><th rowspan="2">{{.}}</th><th class="l" rowspan="2">Status</th><th class="g" colspan="4">Hours held</th><th rowspan="2">Pages</th><th rowspan="2">Max depth</th><th rowspan="2">Bytes</th><th rowspan="2">Sessions</th><th rowspan="2">First seen<br>Last seen</th></tr>
+<tr><th>24h</th><th>7d</th><th>30d</th><th>all</th></tr>{{end}}
 
-{{define "shame-row"}}<tr><td class="w"><a href="{{.Prefix}}{{.G.Slug}}/">{{trunc .G.Name 80}}</a>{{with .G.Sub}}<br><small>{{trunc . 80}}</small>{{end}}</td><td class="l">{{range .G.Statuses}}{{template "shame-badge" .}}{{end}}</td>{{range .G.W}}<td>{{hours .HeldMs}}</td>{{end}}{{with .G.All}}<td>{{.Pages}}</td><td>{{.MaxDepth}}</td><td>{{bytes .Bytes}}</td><td>{{.Sessions}}</td><td>{{when .FirstSeen}}</td><td>{{when .LastSeen}}</td>{{end}}</tr>{{end}}
+{{define "shame-row"}}<tr><td class="w"><a href="{{.Prefix}}{{.G.Slug}}/">{{trunc .G.Name 80}}</a>{{with .G.Sub}}<br><small>{{trunc . 80}}</small>{{end}}</td><td class="l">{{range .G.Statuses}}{{template "shame-badge" .}}{{end}}</td>{{range .G.W}}<td>{{hours .HeldMs}}</td>{{end}}{{with .G.All}}<td>{{.Pages}}</td><td>{{.MaxDepth}}</td><td>{{bytes .Bytes}}</td><td>{{.Sessions}}</td>{{template "shame-seen" .}}{{end}}</tr>{{end}}
+
+{{define "shame-seen"}}<td>{{when .FirstSeen}}<br>{{when .LastSeen}}</td>{{end}}
 
 {{define "shame-table"}}{{if .Rows}}<div class="tw"><table>
 <thead>{{template "shame-rows-head" .Heading}}</thead>
