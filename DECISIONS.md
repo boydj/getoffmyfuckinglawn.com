@@ -216,3 +216,8 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
   - **Why prefixes:** rotating addresses inside one network, or firing many short requests, used to slip past the per-IP cap.
   - **Why not 5/s:** an adaptively dripped crawler with 20 parallel connections on ~4 s pages already makes ~5 req/s, and a tighter limit would clip the depth #9 was for. 10/s still stops floods.
   - **Implementation:** stdlib only (no `x/time/rate`), with memory bounded at 100k prefixes. `0` turns either limit off; the load-test script does, because it simulates thousands of clients from a few /24s.
+- **Parent tracking (frontier amplification):** child links now embed a 4-byte id of the page that linked them (the first 4 bytes of HMAC(secret, path || "\x01id")); entry links carry none.
+  - **Logged:** `page_id` and `parent_id` columns (migration 4, partial index on `page_id`), NULL outside `/lawn/`. An id of 0 is stored as NULL; the 1-in-2^32 collision is ignored.
+  - **Measured:** `lawn bots` matches each child to an earlier fetch of its parent by the same user agent, across IPs because distributed crawlers split work between addresses. It counts how many of those started before the parent response ended (`OPEN`). Parents that retention has rolled up leave children unmatched, so run it on recent windows.
+  - **Compatibility:** child URLs grow by about 7 characters. Old child URLs (MAC only) and entry URLs still decode and render the same page, with no parent.
+  - **Why ids and not full paths:** a 4-byte id keeps URLs short and rows small, and the HMAC means clients cannot forge a matching id.

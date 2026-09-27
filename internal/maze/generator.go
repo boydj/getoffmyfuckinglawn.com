@@ -75,6 +75,26 @@ func NewGenerator(secret []byte, chain *Chain) *Generator {
 	return g
 }
 
+// pageIDTag separates page IDs from link MACs (which start with 0x00).
+var pageIDTag = []byte("\x01id")
+
+// pageID is the 32-bit ID of the page at st.path: HMAC(secret, path ||
+// "\x01id"). Child links carry their parent's ID.
+func pageID(st *renderState) uint32 {
+	return binary.BigEndian.Uint32(st.macSum(pageIDTag)[:4])
+}
+
+// IDs returns the page ID of path and, if its URL carries one, the ID of
+// the page whose link led here. Both are stable for a given secret.
+func (g *Generator) IDs(path string) (page, parent uint32, hasParent bool) {
+	st := g.states.Get().(*renderState)
+	st.path = append(st.path[:0], path...)
+	page = pageID(st)
+	g.states.Put(st)
+	parent, hasParent = ParentID(path)
+	return page, parent, hasParent
+}
+
 // macSum computes HMAC(secret, st.path || extra) into st.sum.
 func (st *renderState) macSum(extra []byte) []byte {
 	st.mac.Reset()
@@ -219,6 +239,7 @@ func (g *Generator) renderLinks(st *renderState, r *rand.Rand, childDepth int) {
 	lb.WriteString("</h2>\n<ul>\n")
 	n := minLinks + r.IntN(maxLinks-minLinks+1)
 	idx := st.idx[:]
+	parent := pageID(st) // reuses st.sum; the page seed was consumed in Render
 	for i := range n {
 		lb.WriteString(`<li><a href="/lawn/`)
 		if r.IntN(4) == 0 {
@@ -229,7 +250,7 @@ func (g *Generator) renderLinks(st *renderState, r *rand.Rand, childDepth int) {
 		}
 		idx[0] = 0
 		binary.BigEndian.PutUint16(idx[1:], uint16(i))
-		st.tok = appendToken(st.tok[:0], childDepth, st.macSum(idx))
+		st.tok = appendChildToken(st.tok[:0], childDepth, st.macSum(idx), parent)
 		lb.Write(st.tok)
 		lb.WriteString(`">`)
 		g.writeAnchor(lb, st, r)

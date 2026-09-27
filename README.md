@@ -254,6 +254,7 @@ GROUP BY 1,2 ORDER BY n DESC LIMIT 30;"
 - **Browser-looking UAs** with those signals are grouped by network instead, which is how headless scrapers show up.
 - **Each group gets a verdict:** `compliant`, `entered /lawn/`, `read robots.txt, entered /lawn/`, or `never fetched robots.txt`.
 - **Flags:** `NEW` for groups first seen in the last 7 days, `UNKNOWN` for groups not in `crawlers.yaml`.
+- **`OPEN` column (frontier amplification):** every maze link carries a short id of the page it came from, and each `/lawn/` row logs `page_id` and `parent_id`. `OPEN` is the share of followed links that the same user agent fetched while the parent page was *still dripping*, from any of its IPs. A high share means the crawler harvests links from the leading `<nav>` and fans out, so each held connection spawns more; a low share means it waits for pages to finish. The detail block gives the raw counts.
 - **Detail blocks** for unknown and new groups: sample UA, contact URL, reverse-DNS domains, networks, header fingerprint, HTTP/TLS versions, and a `crawlers.yaml` stub to complete from the vendor's docs.
 
 ```sh

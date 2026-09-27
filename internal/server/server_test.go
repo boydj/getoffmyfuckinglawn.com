@@ -25,6 +25,14 @@ type fakePages struct{}
 func (fakePages) Render(buf *bytes.Buffer, path string) {
 	buf.WriteString("<html><title>" + path + "</title><body><nav><a href=\"/lawn/next\">next</a></nav>\n" + strings.Repeat("x", 100) + "</body></html>")
 }
+func (fakePages) IDs(path string) (page, parent uint32, hasParent bool) {
+	// Deterministic stand-ins: page = len(path); a "/lawn/next" link
+	// claims parent 1.
+	if path == "/lawn/next" {
+		return uint32(len(path)), 1, true
+	}
+	return uint32(len(path)), 0, false
+}
 func (fakePages) EntryURLs(n int) []string {
 	out := make([]string, n)
 	for i := range out {
@@ -214,8 +222,11 @@ func TestRoutes(t *testing.T) {
 		if rec.IsViolation != want {
 			t.Errorf("%s: is_violation=%v", rec.Path, rec.IsViolation)
 		}
-		if !want && rec.Depth != -1 {
-			t.Errorf("%s: depth must be NULL outside /lawn/", rec.Path)
+		if !want && (rec.Depth != -1 || rec.PageID != 0 || rec.ParentID != 0) {
+			t.Errorf("%s: depth and page ids must be NULL outside /lawn/", rec.Path)
+		}
+		if want && rec.PageID != uint32(len(rec.Path)) {
+			t.Errorf("%s: page_id %d", rec.Path, rec.PageID)
 		}
 	}
 	if len(r.log.robots) != 1 || r.log.robots[0].IP != "203.0.113.7" {
@@ -526,5 +537,20 @@ func TestMazeRateLimited(t *testing.T) {
 	// Non-maze routes are never rate limited.
 	if w := r.do("GET", "/", "203.0.113.7", "ua"); w.Code != 200 || r.log.reqs[1].EndReason != "" {
 		t.Error("homepage must not be rate limited")
+	}
+}
+
+func TestMazeLogsParentID(t *testing.T) {
+	r := newRig(t)
+	r.do("GET", "/lawn/entry0", "203.0.113.7", "ua")
+	r.do("GET", "/lawn/next", "203.0.113.7", "ua")
+	if len(r.log.reqs) != 2 {
+		t.Fatalf("logged %d", len(r.log.reqs))
+	}
+	if e := r.log.reqs[0]; e.PageID == 0 || e.ParentID != 0 {
+		t.Errorf("entry: %+v", e)
+	}
+	if c := r.log.reqs[1]; c.PageID != uint32(len("/lawn/next")) || c.ParentID != 1 {
+		t.Errorf("child: page=%d parent=%d", c.PageID, c.ParentID)
 	}
 }

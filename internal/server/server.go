@@ -29,6 +29,10 @@ const RobotsTxt = "User-agent: *\nDisallow: /lawn/\n"
 type PageRenderer interface {
 	Render(buf *bytes.Buffer, path string)
 	EntryURLs(n int) []string
+	// IDs returns path's page id and, when its URL carries one, the id of
+	// the page that linked to it. Logged so analysis can match a child
+	// fetch to its parent's request.
+	IDs(path string) (page, parent uint32, hasParent bool)
 }
 
 // Dripper writes a body slowly (DripWith) or at once (Fast).
@@ -180,6 +184,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		route = routeLawn
 		rec.IsViolation = true
 		rec.Depth = maze.Depth(path)
+		var hasParent bool
+		rec.PageID, rec.ParentID, hasParent = s.d.Pages.IDs(path)
+		if !hasParent {
+			rec.ParentID = 0
+		}
 		sent, rec.Dripped, rec.EndReason = s.serveMaze(w, r, ip, asn, ua, start)
 	case path == "/robots.txt":
 		route = routeRobots

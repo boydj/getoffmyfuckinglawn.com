@@ -49,7 +49,7 @@ func Write(w io.Writer, r *Report, o WriteOptions) {
 		shown = shown[:o.Limit]
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "BOT\tKNOWN AS\tVERDICT\tREQ\tROBOTS\tBAIT\tLAWN\tDEPTH\tIPS\tTOP NETWORK\tPTR DOMAIN\tFIRST SEEN\tLAST SEEN\tFLAGS")
+	fmt.Fprintln(tw, "BOT\tKNOWN AS\tVERDICT\tREQ\tROBOTS\tBAIT\tLAWN\tDEPTH\tOPEN\tIPS\tTOP NETWORK\tPTR DOMAIN\tFIRST SEEN\tLAST SEEN\tFLAGS")
 	for _, b := range shown {
 		known := b.Known
 		if known == "" {
@@ -62,8 +62,9 @@ func Write(w io.Writer, r *Report, o WriteOptions) {
 		if b.Known == "" {
 			flags = append(flags, "UNKNOWN")
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
 			clip(b.Token, 40), clip(known, 30), b.Verdict, b.Requests, b.Robots, b.Bait, b.Violations, b.MaxDepth,
+			b.Frontier.openShare(),
 			len(b.IPs), clip(joinOr(top(b.ASNs, 1), "-"), 40), joinOr(top(b.PTRDomains, 1), "-"),
 			ts(b.FirstSeen), ts(b.LastSeen), strings.Join(flags, " "))
 	}
@@ -102,6 +103,10 @@ func writeDetails(w io.Writer, b *Bot) {
 	fmt.Fprintf(w, "  TLS:          %s\n", joinOr(top(b.TLS, 2), "-"))
 	fmt.Fprintf(w, "  activity:     %d requests from %d IPs; %d robots.txt, %d bait pages, %d /lawn/ (max depth %d)\n",
 		b.Requests, len(b.IPs), b.Robots, b.Bait, b.Violations, b.MaxDepth)
+	if b.Children > 0 {
+		fmt.Fprintf(w, "  frontier:     %d child fetches; %d followed a parent fetch by this UA, %d while the parent was still dripping (%s)\n",
+			b.Children, b.Follows, b.Open, b.Frontier.openShare())
+	}
 	if b.Known == "" && !strings.HasPrefix(b.Token, "browser-like") && !strings.HasPrefix(b.Token, "(") {
 		fmt.Fprintln(w, "  crawlers.yaml stub (verify the vendor's docs before adding):")
 		fmt.Fprintf(w, "    - org: TODO  # %s\n", orDash(b.Contact))
@@ -109,6 +114,15 @@ func writeDetails(w io.Writer, b *Bot) {
 		fmt.Fprintf(w, "      ua_patterns: ['\\b%s\\b']\n", regexp.QuoteMeta(b.Token))
 		fmt.Fprintln(w, "      verify: {method: none}  # TODO: official verification method, if any")
 	}
+}
+
+// openShare is the OPEN column: the share of followed links fetched while
+// their parent was still dripping, "-" when there is nothing to measure.
+func (f Frontier) openShare() string {
+	if f.Follows == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d%%", f.Open*100/f.Follows)
 }
 
 func statusSummary(m map[string]int) string {

@@ -462,3 +462,61 @@ func TestLinksLeadThePage(t *testing.T) {
 		t.Fatal("LeadLen without nav must be 0")
 	}
 }
+
+func TestChildLinksCarryParentID(t *testing.T) {
+	g := NewGenerator(testSecret, testChain(t))
+	hrefRE := regexp.MustCompile(`href="(/lawn/[^"]+)"`)
+	for _, p := range append(g.EntryURLs(20), "/lawn/", "/lawn/archive/2019/x") {
+		self, _, _ := g.IDs(p)
+		var b bytes.Buffer
+		g.Render(&b, p)
+		links := hrefRE.FindAllStringSubmatch(b.String(), -1)
+		if len(links) < 10 {
+			t.Fatalf("%s: %d links", p, len(links))
+		}
+		for _, m := range links {
+			parent, ok := ParentID(m[1])
+			if !ok || parent != self {
+				t.Fatalf("%s: child %s parent=%08x ok=%v, want %08x", p, m[1], parent, ok, self)
+			}
+			if Depth(m[1]) != Depth(p)+1 {
+				t.Fatalf("%s: child depth %d", m[1], Depth(m[1]))
+			}
+			if _, cp, has := g.IDs(m[1]); !has || cp != self {
+				t.Fatalf("IDs(%s) parent mismatch", m[1])
+			}
+		}
+	}
+	// Entry tokens and legacy child tokens (MAC only) have no parent but
+	// still decode their depth.
+	for _, e := range g.EntryURLs(5) {
+		if _, ok := ParentID(e); ok {
+			t.Errorf("entry %s must carry no parent", e)
+		}
+	}
+	legacy := "/lawn/" + string(appendToken(nil, 7, make([]byte, 32)))
+	if _, ok := ParentID(legacy); ok || Depth(legacy) != 7 {
+		t.Errorf("legacy token: depth %d", Depth(legacy))
+	}
+	// IDs are stable and secret-dependent.
+	a, _, _ := g.IDs("/lawn/x")
+	b, _, _ := g.IDs("/lawn/x")
+	c, _, _ := NewGenerator([]byte("another-secret-0123456789abcdef"), testChain(t)).IDs("/lawn/x")
+	if a != b || a == c {
+		t.Errorf("page IDs: %08x %08x %08x", a, b, c)
+	}
+	if _, ok := ParentID("/robots.txt"); ok {
+		t.Error("non-maze path")
+	}
+}
+
+func TestIDsNoAlloc(t *testing.T) {
+	if raceEnabled {
+		t.Skip("allocation counts are not meaningful under -race (sync.Pool drops items)")
+	}
+	g := NewGenerator(testSecret, testChain(t))
+	g.IDs("/lawn/warm")
+	if n := testing.AllocsPerRun(200, func() { g.IDs("/lawn/archive/2019/abcdefghijklmnopqrstuvwx") }); n != 0 {
+		t.Errorf("IDs allocates %.0f times", n)
+	}
+}

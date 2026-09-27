@@ -66,3 +66,32 @@ func TestMigrationUpgradesV1(t *testing.T) {
 	}
 	s2.Close()
 }
+
+// Page ids round-trip, 0 is stored as NULL, and the full 32-bit range
+// survives (ids are unsigned; SQLite integers are signed 64-bit).
+func TestPageIDs(t *testing.T) {
+	s := openTemp(t)
+	err := s.InsertRequests(context.Background(), []Request{
+		{TsStart: 1, IP: "203.0.113.1", Path: "/lawn/a", Depth: 0, IsViolation: true, PageID: 0xFFFFFFFF},
+		{TsStart: 2, IP: "203.0.113.1", Path: "/lawn/a/b", Depth: 1, IsViolation: true, PageID: 7, ParentID: 0xFFFFFFFF},
+		{TsStart: 3, IP: "203.0.113.1", Path: "/", Depth: -1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	get := func(p string) (page, parent sql.NullInt64) {
+		if err := s.DB().QueryRow(`SELECT page_id, parent_id FROM requests WHERE path = ?`, p).Scan(&page, &parent); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if pg, par := get("/lawn/a"); pg.Int64 != 0xFFFFFFFF || par.Valid {
+		t.Errorf("entry page: %v %v", pg, par)
+	}
+	if pg, par := get("/lawn/a/b"); pg.Int64 != 7 || par.Int64 != 0xFFFFFFFF {
+		t.Errorf("child page: %v %v", pg, par)
+	}
+	if pg, par := get("/"); pg.Valid || par.Valid {
+		t.Errorf("non-maze row should be NULL: %v %v", pg, par)
+	}
+}

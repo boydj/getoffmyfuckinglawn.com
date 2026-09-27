@@ -43,6 +43,17 @@ type Client struct {
 	Captured, NoAcceptLg int64 // rows with header data; of those, without Accept-Language
 	HeaderNames          string
 	Proto, TLS           string
+	Frontier
+}
+
+// Frontier measures how a client walks the maze: of its /lawn/ fetches
+// whose URL names a parent page (Children), how many followed a fetch of
+// that parent by the same user agent (Follows), and how many of those
+// started while the parent response was still dripping (Open). A high
+// Open share means the tarpit's links are harvested before the page
+// finishes, so holding a connection does not slow the crawl down.
+type Frontier struct {
+	Children, Follows, Open int64
 }
 
 // Bot is every client sharing one product token (or, for browser-looking
@@ -69,7 +80,8 @@ type Bot struct {
 	HeaderNames string
 	Protos      map[string]int64
 	TLS         map[string]int64
-	Clients     []*Client
+	Frontier
+	Clients []*Client
 }
 
 // Report is the result of Collect.
@@ -183,6 +195,9 @@ func (b *Bot) add(c *Client, reasons []string, crawlers []attrib.Crawler) {
 	b.Bait += c.Bait
 	b.Violations += c.Violations
 	b.MaxDepth = max(b.MaxDepth, c.MaxDepth)
+	b.Children += c.Children
+	b.Follows += c.Follows
+	b.Open += c.Open
 	b.FirstSeen = min(b.FirstSeen, c.First)
 	b.LastSeen = max(b.LastSeen, c.Last)
 	st := c.Status
@@ -288,6 +303,9 @@ LEFT JOIN hosts h ON h.ip = r.ip`
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("bots: scan: %w", err)
 	}
+	if err := scanFrontier(ctx, db, from, byKey); err != nil {
+		return nil, err
+	}
 	if !withDaily {
 		return out, nil
 	}
@@ -321,6 +339,38 @@ GROUP BY d.ip, d.user_agent`)
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// scanFrontier fills Frontier for clients in byKey from raw requests since
+// from. Parents are matched by user agent across IPs, since distributed
+// crawlers often fetch a page from one address and its links from others.
+// A parent that has aged out of requests leaves its children unmatched.
+func scanFrontier(ctx context.Context, db *sql.DB, from int64, byKey map[[2]string]*Client) error {
+	rows, err := db.QueryContext(ctx, `
+SELECT ip, ua, COUNT(*), SUM(follows), SUM(open) FROM (
+  SELECT c.ip, COALESCE(c.user_agent, '') AS ua,
+         EXISTS(SELECT 1 FROM requests p WHERE p.page_id = c.parent_id AND p.user_agent IS c.user_agent
+                AND p.ts_start <= c.ts_start) AS follows,
+         EXISTS(SELECT 1 FROM requests p WHERE p.page_id = c.parent_id AND p.user_agent IS c.user_agent
+                AND p.ts_start <= c.ts_start AND c.ts_start < p.ts_end) AS open
+  FROM requests c WHERE c.parent_id IS NOT NULL AND c.ts_start >= ?
+)
+GROUP BY ip, ua`, from)
+	if err != nil {
+		return fmt.Errorf("bots: frontier: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ip, ua string
+		var f Frontier
+		if err := rows.Scan(&ip, &ua, &f.Children, &f.Follows, &f.Open); err != nil {
+			return fmt.Errorf("bots: frontier: %w", err)
+		}
+		if c := byKey[[2]string{ip, ua}]; c != nil {
+			c.Frontier = f
+		}
+	}
+	return rows.Err()
 }
 
 // uaFirstSeen returns the earliest time each user agent was ever seen,
