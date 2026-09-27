@@ -87,8 +87,8 @@ type fakeEgress struct {
 	n  int64
 }
 
-func (e *fakeEgress) Add(n int64)    { e.mu.Lock(); e.n += n; e.mu.Unlock() }
-func (e *fakeEgress) Today() int64   { e.mu.Lock(); defer e.mu.Unlock(); return e.n }
+func (e *fakeEgress) Add(n int64)  { e.mu.Lock(); e.n += n; e.mu.Unlock() }
+func (e *fakeEgress) Today() int64 { e.mu.Lock(); defer e.mu.Unlock(); return e.n }
 
 type fakeLogger struct {
 	mu     sync.Mutex
@@ -220,7 +220,8 @@ func TestRoutes(t *testing.T) {
 	if len(r.log.robots) != 1 || r.log.robots[0].IP != "203.0.113.7" {
 		t.Errorf("robots fetch not logged: %+v", r.log.robots)
 	}
-	if len(r.obs.pairs) != 1 || r.obs.pairs[0] != "203.0.113.7|TestBot/1.0" {
+	// Every visit except /healthz is sent for classification.
+	if len(r.obs.pairs) != len(cases)-1 || r.obs.pairs[0] != "203.0.113.7|TestBot/1.0" {
 		t.Errorf("observer: %v", r.obs.pairs)
 	}
 	if r.drip.drips != 1 || r.lim.active != 0 || r.lim.asns[0] != 64500 {
@@ -406,5 +407,57 @@ func TestAdaptiveBudget(t *testing.T) {
 	}
 	if r.log.reqs[0].EndReason != "client_gone" {
 		t.Errorf("end reason %q", r.log.reqs[0].EndReason)
+	}
+}
+
+func TestFingerprintCapture(t *testing.T) {
+	r := newRig(t)
+	send := func(remote string, extra map[string]string) logstore.Request {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.RemoteAddr = remote
+		req.Header = http.Header{}
+		req.Header.Set("User-Agent", "Bot/1")
+		req.Header.Set("Accept", "*/*")
+		for k, v := range extra {
+			req.Header.Set(k, v)
+		}
+		r.srv.ServeHTTP(httptest.NewRecorder(), req)
+		return r.log.reqs[len(r.log.reqs)-1]
+	}
+	// Through Caddy (trusted peer): proxy headers are dropped from the
+	// name list, and proto/TLS come from Caddy's headers.
+	viaCaddy := send("127.0.0.1:1", map[string]string{
+		"X-Forwarded-For":     "203.0.113.7",
+		"X-Forwarded-Proto":   "https",
+		"X-Forwarded-Host":    "example.test",
+		"Via":                 "2.0 Caddy",
+		"X-Lawn-Client-Proto": "HTTP/2.0",
+		"X-Lawn-Client-Tls":   "tls1.3 TLS_AES_128_GCM_SHA256 h2",
+		"Sec-Fetch-Mode":      "navigate",
+	})
+	if viaCaddy.HeaderNames != "Accept,Sec-Fetch-Mode,User-Agent" {
+		t.Errorf("header_names via proxy: %q", viaCaddy.HeaderNames)
+	}
+	if viaCaddy.Proto != "HTTP/2.0" || viaCaddy.TLS != "tls1.3 TLS_AES_128_GCM_SHA256 h2" {
+		t.Errorf("proto/tls via proxy: %q %q", viaCaddy.Proto, viaCaddy.TLS)
+	}
+	// Direct, untrusted peer: its X-Lawn-* claims are ignored (and kept in
+	// the header list, since the client really sent them).
+	direct := send("198.51.100.9:1", map[string]string{"X-Lawn-Client-Tls": "forged", "X-Lawn-Client-Proto": "HTTP/9"})
+	if direct.TLS != "" || direct.Proto != "HTTP/1.1" {
+		t.Errorf("untrusted peer must not set proto/tls: %q %q", direct.Proto, direct.TLS)
+	}
+	if direct.HeaderNames != "Accept,User-Agent,X-Lawn-Client-Proto,X-Lawn-Client-Tls" {
+		t.Errorf("header_names direct: %q", direct.HeaderNames)
+	}
+}
+
+func TestHeaderNamesBounded(t *testing.T) {
+	h := http.Header{}
+	for i := range 200 {
+		h.Set("X-Custom-Header-Number-"+strconv.Itoa(i), "v")
+	}
+	if n := headerNames(h, false); len(n) > 512 {
+		t.Fatalf("header_names not truncated: %d bytes", len(n))
 	}
 }

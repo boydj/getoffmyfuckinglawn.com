@@ -28,6 +28,15 @@ type IdentityStore interface {
 	UpsertIdentity(ctx context.Context, id logstore.Identity) error
 }
 
+// HostStore caches reverse DNS per IP. It is optional: when the
+// IdentityStore also implements it (as *logstore.Store does), every
+// observed IP gets its PTR recorded, which is how new crawlers are often
+// spotted (crawl-1-2-3.example-bot.com).
+type HostStore interface {
+	GetHost(ctx context.Context, ip string) (logstore.Host, bool, error)
+	UpsertHost(ctx context.Context, h logstore.Host) error
+}
+
 // ErrIndeterminate means verification could not reach a verdict (DNS
 // timeout/SERVFAIL, vendor IP list unavailable). It must never be read as
 // "spoofed".
@@ -60,6 +69,7 @@ type ClassifierStats struct {
 	Classified    int64 // classifications completed (any status)
 	Indeterminate int64 // classifications that hit ErrIndeterminate
 	Errors        int64 // identity store errors
+	PTRLookups    int64 // reverse-DNS lookups for the hosts table
 }
 
 type pair struct{ ip, ua string }
@@ -90,7 +100,7 @@ type Classifier struct {
 	seed  maphash.Seed
 	seen  [seenShards]seenShard
 
-	dropped, classified, indeterminate, errs atomic.Int64
+	dropped, classified, indeterminate, errs, ptrLookups atomic.Int64
 }
 
 // NewClassifier builds a classifier. Call Run to start the workers.
@@ -158,6 +168,7 @@ func (c *Classifier) Stats() ClassifierStats {
 		Classified:    c.classified.Load(),
 		Indeterminate: c.indeterminate.Load(),
 		Errors:        c.errs.Load(),
+		PTRLookups:    c.ptrLookups.Load(),
 	}
 }
 
@@ -228,6 +239,9 @@ func (c *Classifier) Run(ctx context.Context) {
 func (c *Classifier) handle(ctx context.Context, ip, ua string) {
 	if c.store == nil {
 		return
+	}
+	if hs, ok := c.store.(HostStore); ok {
+		c.recordHost(ctx, hs, ip)
 	}
 	old, ok, err := c.store.GetIdentity(ctx, ip, ua)
 	if err != nil {
@@ -393,8 +407,10 @@ func (c *Classifier) verifyRDNS(ctx context.Context, a netip.Addr, domains []str
 
 // ReverifyStale is the `lawn verify-refresh` pass: it re-classifies
 // identities older than TTL that still have raw requests (history that was
-// rolled up keeps the status it had), and classifies every violating
-// (ip, user_agent) in requests that has no identity yet. Work is spread over
+// rolled up keeps the status it had), and classifies every (ip,
+// user_agent) in requests that has no identity yet, violator or not, so
+// well-behaved bots are labelled too. Each job also refreshes the IP's
+// reverse DNS when the store keeps hosts. Work is spread over
 // Workers goroutines. It returns the number of identities written.
 func (c *Classifier) ReverifyStale(ctx context.Context, db *sql.DB) (int, error) {
 	if c.store == nil {
@@ -426,7 +442,7 @@ func (c *Classifier) ReverifyStale(ctx context.Context, db *sql.DB) (int, error)
 		return 0, fmt.Errorf("attrib: reverify: %w", err)
 	}
 	rows, err = db.QueryContext(ctx, `SELECT DISTINCT r.ip, COALESCE(r.user_agent, '') FROM requests r
-	 WHERE r.is_violation = 1 AND NOT EXISTS
+	 WHERE NOT EXISTS
 	 (SELECT 1 FROM identities i WHERE i.ip = r.ip AND i.user_agent = COALESCE(r.user_agent, ''))`)
 	if err != nil {
 		return 0, fmt.Errorf("attrib: reverify: %w", err)
@@ -449,7 +465,11 @@ func (c *Classifier) ReverifyStale(ctx context.Context, db *sql.DB) (int, error)
 	var wg sync.WaitGroup
 	for range c.workers {
 		wg.Go(func() {
+			hs, keepsHosts := c.store.(HostStore)
 			for j := range ch {
+				if keepsHosts {
+					c.recordHost(ctx, hs, j.p.ip)
+				}
 				if c.classifyAndStore(ctx, j.p.ip, j.p.ua, j.old, j.hadOld) {
 					n.Add(1)
 				}
@@ -465,4 +485,41 @@ func (c *Classifier) ReverifyStale(ctx context.Context, db *sql.DB) (int, error)
 	close(ch)
 	wg.Wait()
 	return int(n.Load()), ctx.Err()
+}
+
+// recordHost stores the PTR name for ip unless a row fresher than the TTL
+// exists. The name is not forward-confirmed: it is a lead for a human, not
+// a verification (identities does that for known crawlers). A clean "no
+// PTR" is stored as ""; DNS timeouts and failures store nothing, so the IP
+// is retried the next time it is observed.
+func (c *Classifier) recordHost(ctx context.Context, hs HostStore, ip string) {
+	old, ok, err := hs.GetHost(ctx, ip)
+	if err != nil {
+		c.errs.Add(1)
+		return
+	}
+	if ok && c.now().Sub(time.UnixMilli(old.CheckedAt)) < c.ttl {
+		return
+	}
+	a, err := netip.ParseAddr(ip)
+	if err != nil {
+		return
+	}
+	c.ptrLookups.Add(1)
+	lctx, cancel := context.WithTimeout(ctx, c.dnsTimeout)
+	names, err := c.resolver.LookupAddr(lctx, a.Unmap().String())
+	cancel()
+	if err != nil && !notFound(err) {
+		return
+	}
+	ptr := ""
+	if len(names) > 0 {
+		ptr = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(names[0])), ".")
+		if len(ptr) > 253 {
+			ptr = ptr[:253]
+		}
+	}
+	if err := hs.UpsertHost(ctx, logstore.Host{IP: ip, PTR: ptr, CheckedAt: c.now().UnixMilli()}); err != nil {
+		c.errs.Add(1)
+	}
 }

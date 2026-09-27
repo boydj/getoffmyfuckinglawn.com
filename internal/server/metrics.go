@@ -29,14 +29,14 @@ var routeNames = [numRoutes]string{"other", "home", "robots", "sitemap", "lawn",
 
 // Metrics are hot-path counters; all fields are atomics.
 type Metrics struct {
-	Requests     [numRoutes]atomic.Uint64
-	Violations   atomic.Uint64
-	Dripped      atomic.Uint64
-	Fast         atomic.Uint64
-	LimitShed    atomic.Uint64
-	BytesSent    atomic.Uint64
-	LogDropped   atomic.Uint64
-	DripEnds     [4]atomic.Uint64 // by drip.Outcome
+	Requests   [numRoutes]atomic.Uint64
+	Violations atomic.Uint64
+	Dripped    atomic.Uint64
+	Fast       atomic.Uint64
+	LimitShed  atomic.Uint64
+	BytesSent  atomic.Uint64
+	LogDropped atomic.Uint64
+	DripEnds   [4]atomic.Uint64 // by drip.Outcome
 }
 
 func (m *Metrics) observeDrip(o drip.Outcome) {

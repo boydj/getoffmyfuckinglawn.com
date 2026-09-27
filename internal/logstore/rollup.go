@@ -249,6 +249,29 @@ func (s *Store) rollupDay(ctx context.Context, dayStart, dayEnd, gapMs int64) (i
 		}
 	}
 
+	// Every visitor, violator or not, keeps a per-day summary so compliant
+	// bots and new-bot detection have history beyond raw retention.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO daily_visits
+	 (day, ip, user_agent, asn, asn_org, requests, robots, bait_views, violations, first_ts, last_ts)
+	 SELECT ?, ip, COALESCE(user_agent, ''), MAX(asn), MAX(asn_org), COUNT(*),
+	   SUM(path = '/robots.txt' OR path LIKE '/robots.txt?%'),
+	   SUM(path IN ('/', '/sitemap.xml')),
+	   SUM(is_violation),
+	   MIN(ts_start), MAX(MAX(ts_start, COALESCE(ts_end, ts_start)))
+	 FROM requests WHERE ts_start >= ? AND ts_start < ?
+	 GROUP BY ip, COALESCE(user_agent, '')
+	 ON CONFLICT(day, ip, user_agent) DO UPDATE SET
+	   asn = COALESCE(excluded.asn, asn),
+	   asn_org = COALESCE(excluded.asn_org, asn_org),
+	   requests = requests + excluded.requests,
+	   robots = robots + excluded.robots,
+	   bait_views = bait_views + excluded.bait_views,
+	   violations = violations + excluded.violations,
+	   first_ts = MIN(first_ts, excluded.first_ts),
+	   last_ts = MAX(last_ts, excluded.last_ts)`, day, dayStart, dayEnd); err != nil {
+		return 0, fmt.Errorf("logstore: rollup: daily_visits: %w", err)
+	}
+
 	res, err := tx.ExecContext(ctx, `DELETE FROM requests WHERE is_violation IN (0, 1) AND ts_start >= ? AND ts_start < ?`, dayStart, dayEnd)
 	if err != nil {
 		return 0, fmt.Errorf("logstore: rollup: delete: %w", err)

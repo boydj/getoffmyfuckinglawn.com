@@ -27,9 +27,9 @@ type Drip struct {
 
 // Limits are the self-protection caps.
 type Limits struct {
-	MaxConnsGlobal   int   `yaml:"max_conns_global"`
-	MaxConnsPerASN   int   `yaml:"max_conns_per_asn"`
-	MaxConnsPerIP    int   `yaml:"max_conns_per_ip"`
+	MaxConnsGlobal int `yaml:"max_conns_global"`
+	MaxConnsPerASN int `yaml:"max_conns_per_asn"`
+	MaxConnsPerIP  int `yaml:"max_conns_per_ip"`
 }
 
 // Session controls report-time session derivation.

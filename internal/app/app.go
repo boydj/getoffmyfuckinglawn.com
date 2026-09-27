@@ -369,6 +369,7 @@ func (a *App) registerMetrics() {
 	g("lawn_classifier_dropped_total", "Identities not queued because the queue was full.", "counter", func() float64 { return float64(a.Classifier.Stats().Dropped) })
 	g("lawn_classifier_classified_total", "Identities classified.", "counter", func() float64 { return float64(a.Classifier.Stats().Classified) })
 	g("lawn_patience_tracked", "Clients with a learned drip budget (adaptive drip).", "gauge", func() float64 { return float64(a.patience.Len()) })
+	g("lawn_classifier_ptr_lookups_total", "Reverse-DNS lookups recorded for the hosts table.", "counter", func() float64 { return float64(a.Classifier.Stats().PTRLookups) })
 	g("lawn_asn_ranges", "Ranges in the loaded ASN table.", "gauge", func() float64 { return float64(a.asnEntries.Load()) })
 	g("lawn_shame_last_build_timestamp_seconds", "Unix time of the last successful shame build.", "gauge", func() float64 { return float64(a.lastBuild.Load()) })
 }

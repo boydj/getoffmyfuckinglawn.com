@@ -10,6 +10,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -123,10 +124,10 @@ func (s *Server) lookupASN(a netip.Addr) (uint32, string) {
 // shedPage is served for /lawn/* when a connection cap is hit.
 var shedPage = []byte("<!doctype html><title>busy</title><p>The lawn is full. Try again later.</p>\n")
 
-
 // ServeHTTP implements http.Handler. Every request is logged.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := s.d.Now()
+	viaProxy := inPrefixes(parseHostAddr(r.RemoteAddr), s.d.Trusted)
 	ip := ClientIP(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), s.d.Trusted)
 	asn, asnOrg := s.lookupASN(ip)
 	ua := r.UserAgent()
@@ -146,6 +147,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Accept:         truncate(r.Header.Get("Accept"), 256),
 		AcceptLanguage: truncate(r.Header.Get("Accept-Language"), 128),
 		AcceptEncoding: truncate(r.Header.Get("Accept-Encoding"), 128),
+		HeaderNames:    headerNames(r.Header, viaProxy),
+		Proto:          r.Proto,
+	}
+	if viaProxy {
+		// Caddy sets these (overwriting any client value); see deploy/Caddyfile.
+		if p := r.Header.Get("X-Lawn-Client-Proto"); p != "" {
+			rec.Proto = truncate(p, 16)
+		}
+		rec.TLS = truncate(strings.TrimSpace(r.Header.Get("X-Lawn-Client-Tls")), 96)
 	}
 	var sent int64
 	status := http.StatusOK
@@ -164,9 +174,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rec.IsViolation = true
 		rec.Depth = maze.Depth(path)
 		sent, rec.Dripped, rec.EndReason = s.serveMaze(w, r, ip, asn, ua, start)
-		if s.d.Observer != nil && ip.IsValid() {
-			s.d.Observer.Observe(rec.IP, ua)
-		}
 	case path == "/robots.txt":
 		route = routeRobots
 		sent = s.writeSmall(w, status, "text/plain; charset=utf-8", []byte(RobotsTxt), r)
@@ -201,6 +208,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if rec.TsEnd <= rec.TsStart {
 		rec.TsEnd = rec.TsStart
 	}
+	// Classify every visitor (not only violators), so well-behaved bots and
+	// new ones can be reported. Non-blocking; deduplicated by the observer.
+	if s.d.Observer != nil && ip.IsValid() && route != routeHealth {
+		s.d.Observer.Observe(rec.IP, ua)
+	}
 	s.Metrics.observe(route, rec.IsViolation, rec.Dripped, sent)
 	if !s.d.Logger.LogRequest(rec) {
 		s.Metrics.LogDropped.Add(1)
@@ -216,8 +228,8 @@ func (s *Server) logRobots(f logstore.RobotsFetch) {
 // End reasons for maze requests that were not dripped. Dripped ones use
 // drip.Outcome names (complete, cutoff, client_gone, write_error).
 const (
-	endShed      = "shed"       // over a connection cap: tiny page, no drip
-	endHead      = "head"       // HEAD request: headers only
+	endShed = "shed" // over a connection cap: tiny page, no drip
+	endHead = "head" // HEAD request: headers only
 )
 
 // serveMaze renders the page up front into a pooled buffer, then drips it
@@ -337,4 +349,31 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// proxyAdded are headers our reverse proxy adds; they say nothing about
+// the client, so they are left out of header_names.
+var proxyAdded = map[string]bool{
+	"X-Forwarded-For":     true,
+	"X-Forwarded-Host":    true,
+	"X-Forwarded-Proto":   true,
+	"Via":                 true,
+	"X-Lawn-Client-Proto": true,
+	"X-Lawn-Client-Tls":   true,
+}
+
+// headerNames returns the names of the headers the client sent, sorted and
+// comma-joined (Host is not in r.Header). Which headers a client sends, and
+// which it omits, is a strong hint to what software it is.
+func headerNames(h http.Header, viaProxy bool) string {
+	var arr [32]string
+	names := arr[:0]
+	for k := range h {
+		if viaProxy && proxyAdded[k] {
+			continue
+		}
+		names = append(names, k)
+	}
+	slices.Sort(names)
+	return truncate(strings.Join(names, ","), 512)
 }
