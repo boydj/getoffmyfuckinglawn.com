@@ -24,10 +24,18 @@
 # Source: https://developers.openai.com/api/docs/bots (formerly
 # https://platform.openai.com/docs/bots), which publishes per-bot JSON
 # lists at openai.com/{chatgpt-user,searchbot,gptbot}.json.
+# ChatGPT-User fetches a page when a ChatGPT user asks it to. OpenAI's
+# crawler page says: "Because these actions are initiated by a user,
+# robots.txt rules may not apply." (quoted e.g. by Search Engine Journal,
+# https://www.searchenginejournal.com/openai-says-robots-txt-may-not-apply-to-chatgpts-fetch-bot/585864/;
+# the primary page was unreachable from the build sandbox on 2026-09-27.
+# TODO: re-read https://developers.openai.com/api/docs/bots to confirm.)
 - org: OpenAI
   name: ChatGPT-User
   ua_patterns: ['\bChatGPT-User\b']
   verify: {method: ip_ranges, url: "https://openai.com/chatgpt-user.json"}
+  user_triggered: true
+  robots_exempt: true
 
 - org: OpenAI
   name: OAI-SearchBot
@@ -47,10 +55,13 @@
 # One list covers all three bots. The article also states all three honour
 # robots.txt. (Earlier builds had verify: none here because the article did
 # not yet publish a list.)
+# Claude-User fetches on a user's request, but Anthropic states it honours
+# robots.txt, so it is NOT robots_exempt: its /lawn/ hits are violations.
 - org: Anthropic
   name: Claude-User
   ua_patterns: ['\bClaude-User\b']
   verify: {method: ip_ranges, url: "https://claude.com/crawling/bots.json"}
+  user_triggered: true
 - org: Anthropic
   name: Claude-SearchBot
   ua_patterns: ['\bClaude-SearchBot\b']
@@ -71,10 +82,15 @@
 
 # ------------------------------------------------------------ Perplexity
 # Source: https://docs.perplexity.ai/docs/resources/perplexity-crawlers
+# Perplexity-User fetches when a person asks Perplexity something; unlike
+# PerplexityBot it is not bound by robots.txt the same way (Perplexity
+# crawler docs above; "Agents or Bots?" https://www.perplexity.ai/hub/blog/agents-or-bots-making-sense-of-ai-on-the-open-web).
 - org: Perplexity
   name: Perplexity-User
   ua_patterns: ['\bPerplexity-User\b']
   verify: {method: ip_ranges, url: "https://www.perplexity.com/perplexity-user.json"}
+  user_triggered: true
+  robots_exempt: true
 
 - org: Perplexity
   name: PerplexityBot

@@ -136,13 +136,15 @@ func StatusLabel(status string) string {
 		return "spoofed UA"
 	case logstore.StatusUnverifiable:
 		return "claimed, unverifiable"
+	case StatusUserTriggered:
+		return "verified, user-initiated"
 	}
 	return "anonymous"
 }
 
 func statusClass(status string) string {
 	switch status {
-	case logstore.StatusVerified, logstore.StatusSpoofed, logstore.StatusUnverifiable:
+	case logstore.StatusVerified, logstore.StatusSpoofed, logstore.StatusUnverifiable, StatusUserTriggered:
 		return status
 	}
 	return logstore.StatusAnonymous

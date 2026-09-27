@@ -27,7 +27,17 @@ type Options struct {
 	SessionGap   time.Duration
 	BlocklistMin int // shame.blocklist_min_violations
 	Now          func() time.Time
+	// RobotsExempt reports whether a user agent claims a user-initiated
+	// fetcher whose vendor says robots.txt may not apply (crawlers.yaml
+	// robots_exempt). Only VERIFIED such clients are split out; a spoofed
+	// claim stays in the Hall of Liars. nil = nobody is exempt.
+	RobotsExempt func(ua string) bool
 }
+
+// StatusUserTriggered marks verified user-initiated fetchers whose vendor
+// states robots.txt may not apply to them. Their /lawn/ hits are listed in
+// their own section, not ranked as violations, and never blocklisted.
+const StatusUserTriggered = "user_triggered"
 
 func (o Options) now() time.Time {
 	if o.Now != nil {
@@ -167,19 +177,20 @@ type FeedEntry struct {
 
 // Report is everything the builder renders, and what `lawn stats` prints.
 type Report struct {
-	Generated    time.Time
-	Totals       [NumWindows]Metrics // global counters; Totals[WAll].MaxDepth is the deepest crawl ever
-	Verified     []*Group            // section 1
-	Liars        []*Group            // section 2 (spoofed, by claimed org + ASN)
-	Unverifiable []*Group            // claimed, unverifiable (by claimed org)
-	ASNs         []*Group            // section 3 (every violator, by ASN)
-	ReadRules    []*Group            // section 4 (offenders with >= 1 read_the_rules session)
-	Groups       []*Group            // every offender group (verified, liars, unverifiable, anonymous-by-ASN)
-	Pages        []*Group            // groups that get a shame/org/<slug>/ page
-	Feed         []FeedEntry
-	Blocklist    []string
-	BlocklistMin int
-	Warnings     []string
+	Generated     time.Time
+	Totals        [NumWindows]Metrics // global counters; Totals[WAll].MaxDepth is the deepest crawl ever
+	Verified      []*Group            // section 1
+	Liars         []*Group            // section 2 (spoofed, by claimed org + ASN)
+	Unverifiable  []*Group            // claimed, unverifiable (by claimed org)
+	UserTriggered []*Group            // verified user-initiated fetchers exempt from robots.txt (by org)
+	ASNs          []*Group            // section 3 (every violator, by ASN)
+	ReadRules     []*Group            // section 4 (offenders with >= 1 read_the_rules session)
+	Groups        []*Group            // every offender group (verified, liars, unverifiable, anonymous-by-ASN)
+	Pages         []*Group            // groups that get a shame/org/<slug>/ page
+	Feed          []FeedEntry
+	Blocklist     []string
+	BlocklistMin  int
+	Warnings      []string
 
 	// WellBehaved lists clients that fetched robots.txt and never requested
 	// anything under /lawn/, grouped like the wall (see wellbehaved.go),
@@ -283,6 +294,7 @@ type atom struct {
 }
 
 type collector struct {
+	exempt func(ua string) bool
 	gapMs  int64
 	cut    [NumWindows]int64
 	atoms  map[atomKey]*atom
@@ -515,7 +527,7 @@ func (c *collector) flushPair(p *pair) {
 		}
 		return
 	}
-	a := c.atom(atomKey{status: p.status, org: p.org, asn: p.asn}, string(p.asnOrg))
+	a := c.atom(atomKey{status: c.effective(p.status, p.ua), org: p.org, asn: p.asn}, string(p.asnOrg))
 	ev := p.events
 	all := logstore.DeriveSessions(ev, c.gapMs)
 	var lastSeen int64
@@ -612,6 +624,7 @@ func (c *collector) scanDaily(ctx context.Context, db *sql.DB) error {
 			continue
 		}
 		status, org = normalize(status, org)
+		status = c.effective(status, []byte(ua))
 		var a32 uint32
 		if asn > 0 && asn <= 1<<32-1 {
 			a32 = uint32(asn)
@@ -649,7 +662,7 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 		return nil, errors.New("shame: nil DB")
 	}
 	now := opt.now().UTC()
-	c := &collector{gapMs: opt.gap().Milliseconds(), atoms: map[atomKey]*atom{}, polite: map[atomKey]*politeAtom{}}
+	c := &collector{exempt: opt.RobotsExempt, gapMs: opt.gap().Milliseconds(), atoms: map[atomKey]*atom{}, polite: map[atomKey]*politeAtom{}}
 	for w, d := range windowDur {
 		if d > 0 {
 			c.cut[w] = now.Add(-d).UnixMilli()
@@ -666,7 +679,15 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 
 // ---- report assembly ----
 
-var statusOrder = []string{logstore.StatusVerified, logstore.StatusSpoofed, logstore.StatusUnverifiable, logstore.StatusAnonymous}
+var statusOrder = []string{logstore.StatusVerified, StatusUserTriggered, logstore.StatusSpoofed, logstore.StatusUnverifiable, logstore.StatusAnonymous}
+
+// effective turns a verified robots-exempt fetcher into StatusUserTriggered.
+func (c *collector) effective(status string, ua []byte) string {
+	if status == logstore.StatusVerified && c.exempt != nil && c.exempt(string(ua)) {
+		return StatusUserTriggered
+	}
+	return status
+}
 
 func (g *Group) finalize() {
 	a := g.agg
@@ -793,6 +814,9 @@ func (c *collector) report(now time.Time, blocklistMin int) *Report {
 		}
 		pg.agg.merge(a.agg)
 
+		if k.status == StatusUserTriggered {
+			continue // not a violation: kept out of Top ASNs
+		}
 		xg := asnGroups[k.asn]
 		if xg == nil {
 			xg = &Group{Kind: KindASN, Name: ASNLabel(k.asn, a.asnOrg), ASN: k.asn, ASNOrg: a.asnOrg, agg: newAgg()}
@@ -838,6 +862,9 @@ func (c *collector) report(now time.Time, blocklistMin int) *Report {
 		case logstore.StatusUnverifiable:
 			g.Slug, g.OwnPage = claim(Slugify(g.Name)+"-unverifiable"), true
 			r.Unverifiable = append(r.Unverifiable, g)
+		case StatusUserTriggered:
+			g.Slug, g.OwnPage = claim(Slugify(g.Name)+"-user-initiated"), true
+			r.UserTriggered = append(r.UserTriggered, g)
 		default:
 			g.Slug = asnGroups[g.ASN].Slug
 		}
@@ -845,7 +872,7 @@ func (c *collector) report(now time.Time, blocklistMin int) *Report {
 			r.Pages = append(r.Pages, g)
 		}
 		r.Groups = append(r.Groups, g)
-		if g.W[WAll].ReadRules > 0 {
+		if g.W[WAll].ReadRules > 0 && g.Kind != StatusUserTriggered {
 			r.ReadRules = append(r.ReadRules, g)
 		}
 	}
@@ -857,7 +884,7 @@ func (c *collector) report(now time.Time, blocklistMin int) *Report {
 		}
 		ag.Slug = primary[pk].Slug
 	}
-	for _, gs := range [][]*Group{r.Verified, r.Liars, r.Unverifiable, r.ASNs, r.Groups, r.Pages} {
+	for _, gs := range [][]*Group{r.Verified, r.Liars, r.Unverifiable, r.UserTriggered, r.ASNs, r.Groups, r.Pages} {
 		byHeld(gs)
 	}
 	byReadRules(r.ReadRules)

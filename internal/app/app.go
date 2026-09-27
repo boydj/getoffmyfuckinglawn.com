@@ -50,6 +50,7 @@ type App struct {
 	buildMu    sync.Mutex
 	asnEntries atomic.Int64
 	patience   *drip.Patience
+	crawlers   atomic.Pointer[[]attrib.Crawler] // for the shame builder's exemptions
 }
 
 func (o *Options) defaults() {
@@ -99,6 +100,7 @@ func New(cfg config.Config, opt Options) (*App, error) {
 		st.Close()
 		return nil, err
 	}
+	a.crawlers.Store(&crawlers)
 	a.Ranges = newRangeStore(cfg, crawlers, opt)
 	a.Classifier = newClassifier(cfg, crawlers, a.Ranges, st, opt)
 
@@ -198,6 +200,7 @@ func (a *App) Reload() error {
 	if err != nil {
 		errs = append(errs, err)
 	} else {
+		a.crawlers.Store(&crawlers)
 		a.Ranges.SetCrawlers(crawlers)
 		a.Classifier.SetCrawlers(crawlers)
 	}
@@ -207,9 +210,11 @@ func (a *App) Reload() error {
 // Handler is the public handler (for tests).
 func (a *App) Handler() http.Handler { return a.Server }
 
-// ShameOptions returns the builder options for this config.
-func ShameOptions(cfg config.Config, st *logstore.Store, now func() time.Time) shame.Options {
+// ShameOptions returns the builder options for this config. crawlers
+// supplies the robots_exempt user-initiated fetchers (nil: none exempt).
+func ShameOptions(cfg config.Config, st *logstore.Store, now func() time.Time, crawlers []attrib.Crawler) shame.Options {
 	return shame.Options{
+		RobotsExempt: func(ua string) bool { return attrib.RobotsExemptUA(crawlers, ua) },
 		DB:           st.DB(),
 		Templates:    web.Templates(cfg.TemplatesDir),
 		PublicDir:    cfg.PublicDir,
@@ -225,7 +230,7 @@ func ShameOptions(cfg config.Config, st *logstore.Store, now func() time.Time) s
 func (a *App) BuildShame(ctx context.Context) (*shame.Report, error) {
 	a.buildMu.Lock()
 	defer a.buildMu.Unlock()
-	r, err := shame.Build(ctx, ShameOptions(a.Cfg, a.Store, a.opt.Now))
+	r, err := shame.Build(ctx, ShameOptions(a.Cfg, a.Store, a.opt.Now, *a.crawlers.Load()))
 	if err == nil {
 		a.lastBuild.Store(a.opt.Now().Unix())
 	}
@@ -388,7 +393,7 @@ func BuildShameOnce(ctx context.Context, cfg config.Config, out io.Writer) error
 	if err := os.MkdirAll(cfg.PublicDir, 0o755); err != nil {
 		return err
 	}
-	r, err := shame.Build(ctx, ShameOptions(cfg, st, time.Now))
+	r, err := shame.Build(ctx, ShameOptions(cfg, st, time.Now, loadCrawlersOrNil(cfg, out)))
 	if err != nil {
 		return err
 	}
@@ -411,7 +416,7 @@ func Stats(ctx context.Context, cfg config.Config, since string, limit int, out 
 		return err
 	}
 	defer st.Close()
-	r, err := shame.Collect(ctx, ShameOptions(cfg, st, time.Now))
+	r, err := shame.Collect(ctx, ShameOptions(cfg, st, time.Now, loadCrawlersOrNil(cfg, out)))
 	if err != nil {
 		return err
 	}
@@ -476,4 +481,16 @@ func Bots(ctx context.Context, cfg config.Config, o BotsOptions, out io.Writer) 
 	}
 	bots.Write(out, r, bots.WriteOptions{UnknownOnly: o.UnknownOnly, NewOnly: o.NewOnly, Limit: o.Limit, Details: o.Details})
 	return nil
+}
+
+// loadCrawlersOrNil loads crawlers.yaml for the one-off commands. Without
+// it nobody is treated as robots-exempt (the conservative direction) and a
+// warning is printed.
+func loadCrawlersOrNil(cfg config.Config, out io.Writer) []attrib.Crawler {
+	cs, err := attrib.LoadCrawlers(cfg.CrawlersFile)
+	if err != nil {
+		fmt.Fprintf(out, "warning: %v (no user-initiated fetchers will be exempted)\n", err)
+		return nil
+	}
+	return cs
 }
