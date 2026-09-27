@@ -192,6 +192,19 @@ Unattended-Upgrade::Automatic-Reboot-Time "04:30";
 APT
 systemctl enable --quiet unattended-upgrades.service 2>/dev/null || true
 
+# ------------------------------------------------------------ host firewall
+# Vultr's Debian/Ubuntu images ship with ufw enabled and only SSH allowed, so
+# 80/443 would be dropped on the box even though the Vultr firewall group
+# opens them (ACME then fails with "Timeout during connect"). Open the web
+# ports and leave everything else as the image set it; SSH is still limited
+# to admin_cidrs by the Vultr firewall group. `ufw allow` is idempotent.
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+	for port in 80/tcp 443/tcp; do
+		ufw allow "$port" >/dev/null
+	done
+	log "ufw is active: allowed 80/tcp and 443/tcp"
+fi
+
 # ------------------------------------------------------------------ systemd
 systemctl daemon-reload
 # lawn.service is ConditionPathExists-gated on the binary, so enabling it

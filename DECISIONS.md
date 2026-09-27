@@ -146,3 +146,4 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 4. **Caddy apt repository.** The keyring and repo URLs come from search results quoting caddyserver.com/docs/install. The unattended-upgrades origin pattern for Caddy's repo is also unconfirmed; worst case, Caddy isn't auto-upgraded.
 5. **The deploy workflow can't reach SSH by default.** GitHub-hosted runners aren't in `admin_cidrs`; add their ranges or use a self-hosted runner.
 6. **Backups stay on the box.** Copy them off-box if the history matters.
+- **host-setup opens 80/443 in ufw when ufw is active, and otherwise leaves ufw alone.** Vultr's Debian/Ubuntu images ship with ufw enabled and SSH-only, which silently dropped ACME challenges on the first real deploy. ufw stays on as defense in depth behind the Vultr firewall group.
