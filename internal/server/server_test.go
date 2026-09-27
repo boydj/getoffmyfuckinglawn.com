@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -459,5 +460,50 @@ func TestHeaderNamesBounded(t *testing.T) {
 	}
 	if n := headerNames(h, false); len(n) > 512 {
 		t.Fatalf("header_names not truncated: %d bytes", len(n))
+	}
+}
+
+func TestLogPathDropsQueryValues(t *testing.T) {
+	cases := map[string]string{
+		"/lawn/abc":                          "/lawn/abc",
+		"/":                                  "/",
+		"/robots.txt?x=1":                    "/robots.txt?x",
+		"/lawn/a?token=SECRET&a=1&token=2&b": "/lawn/a?a&b&token",
+		"/search?q=alice%40example.com":      "/search?q",
+		"/p%20q?=v&k":                        "/p%20q?k",
+	}
+	for in, want := range cases {
+		u, err := url.ParseRequestURI(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := logPath(u); got != want {
+			t.Errorf("logPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+	u, _ := url.ParseRequestURI("/x?" + strings.Repeat("k=v&", 1) + "a1&a2&a3&a4&a5&a6&a7&a8&a9&b1&b2&b3&b4&b5&b6&b7&b8&b9")
+	if got := logPath(u); !strings.HasSuffix(got, "…") || strings.Contains(got, "=v") {
+		t.Errorf("many keys should be capped: %q", got)
+	}
+	// End to end: the logged row never contains the value.
+	r := newRig(t)
+	r.do("GET", "/lawn/zz?session=hunter2", "203.0.113.7", "ua")
+	if p := r.log.reqs[0].Path; p != "/lawn/zz?session" || strings.Contains(p, "hunter2") {
+		t.Errorf("logged path %q", p)
+	}
+}
+
+func TestLogReferer(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                                 "",
+		"https://example.test/sitemap.xml": "https://example.test/sitemap.xml",
+		"https://search.test/q?query=secret#frag": "https://search.test/q?query",
+		"https://user:pw@host.test/":              "https://host.test/",
+		"mailto:someone@example.test":             "(unparsable)",
+		"/relative/path?x=1":                      "/relative/path?x",
+	} {
+		if got := logReferer(in); got != want {
+			t.Errorf("logReferer(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

@@ -202,3 +202,13 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **Rows are ordered most recently seen first; the 24h/7d/30d windows use raw rows, and all-time adds `daily_visits`.** Same rules as the wall.
 - **Collection is a single streaming scan: a flat UNION ALL over requests, `daily_visits` and `daily_aggregates`, ordered by (ip, ua).** Memory is bounded to one client pair at a time. The lead added `idx_req_ip_ua_ts` to migration 3 (not yet deployed anywhere) so the scan and the rollup walk rows in index order. The whole scan costs about 1.3× the old one on a 1M-row test.
 - **`lawn stats` gains a "Well-behaved" section that shows network labels only.**
+
+## Second-report follow-ups
+
+- **User-initiated fetchers:** `crawlers.yaml` gains `user_triggered` and `robots_exempt` (the second requires the first).
+  - **Exempt:** ChatGPT-User (OpenAI's crawler page: "robots.txt rules may not apply"; the primary page was unreachable from the sandbox, so it is quoted via press coverage, with a TODO to re-check) and Perplexity-User.
+  - **Not exempt:** Claude-User is user-triggered, but Anthropic states it honours robots.txt.
+  - **On the wall:** a VERIFIED exempt fetcher's `/lawn/` hits get their own "User-initiated fetchers" section, excluded from Top ASNs, read-the-rules and the blocklist, and shown only as /24 or /48. They still count in totals and `feed.json` because the time was really held.
+  - **Spoofed claims:** they stay in the Hall of Liars.
+  - **Why:** presenting a person's one-off request as a crawler ignoring the rules is the easiest claim to dispute.
+- **The log keeps the path plus query parameter NAMES only (`/x?q=secret&a=1` → `/x?a&q`).** The Referer likewise keeps scheme, host, path and parameter names, with no values, userinfo or fragment. Values can carry tokens or personal data, and nothing needs them.

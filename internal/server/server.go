@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -140,10 +141,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ASNOrg:    asnOrg,
 		UserAgent: ua,
 		Method:    r.Method,
-		Path:      truncate(r.URL.RequestURI(), 1024),
+		Path:      logPath(r.URL),
 		Depth:     -1,
 		// Fingerprinting aids, stored for analysis only (never published).
-		Referer:        truncate(r.Header.Get("Referer"), 512),
+		Referer:        logReferer(r.Header.Get("Referer")),
 		Accept:         truncate(r.Header.Get("Accept"), 256),
 		AcceptLanguage: truncate(r.Header.Get("Accept-Language"), 128),
 		AcceptEncoding: truncate(r.Header.Get("Accept-Encoding"), 128),
@@ -376,4 +377,50 @@ func headerNames(h http.Header, viaProxy bool) string {
 	}
 	slices.Sort(names)
 	return truncate(strings.Join(names, ","), 512)
+}
+
+// logPath is what the log keeps of the request URL: the escaped path plus
+// the query parameter NAMES, never their values ("/x?q=secret&a=1" ->
+// "/x?a&q"). Values can carry tokens or personal data, and nothing here
+// needs them; the names still show how a client builds URLs.
+func logPath(u *url.URL) string {
+	p := u.EscapedPath()
+	if p == "" {
+		p = "/"
+	}
+	if u.RawQuery == "" {
+		return truncate(p, 1024)
+	}
+	var arr [16]string
+	keys := arr[:0]
+	for part := range strings.SplitSeq(u.RawQuery, "&") {
+		k, _, _ := strings.Cut(part, "=")
+		if k == "" || slices.Contains(keys, k) {
+			continue
+		}
+		if len(keys) == cap(arr) {
+			keys = append(keys, "…")
+			break
+		}
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return truncate(p+"?"+strings.Join(keys, "&"), 1024)
+}
+
+// logReferer keeps a Referer's scheme, host and path plus query parameter
+// names (as logPath does), dropping values and fragments.
+func logReferer(ref string) string {
+	if ref == "" {
+		return ""
+	}
+	u, err := url.Parse(ref)
+	if err != nil || (u.Scheme != "" && u.Host == "" && u.Opaque != "") {
+		return "(unparsable)"
+	}
+	origin := ""
+	if u.Host != "" {
+		origin = u.Scheme + "://" + u.Host
+	}
+	return truncate(origin+logPath(u), 512)
 }
