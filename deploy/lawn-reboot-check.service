@@ -1,0 +1,14 @@
+# Reboot if a package asked for it or a newer kernel is installed.
+[Unit]
+Description=lawn: reboot the host if updates require it
+After=apt-daily-upgrade.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/lawn/reboot-check.sh
+StateDirectory=lawn-reboot-check
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes

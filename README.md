@@ -119,7 +119,7 @@ Everything goes through `make`. The target is one dedicated Vultr instance that 
 - **cloud-init** (first boot):
   - writes the `deploy/` units, scripts and Caddyfile;
   - puts the secret in `/etc/lawn/env`;
-  - runs `deploy/host-setup.sh`, which installs Caddy (official apt repo), sqlite3 and unattended-upgrades, creates the `lawn` user and directories, caps journald, tunes socket sysctls, enables the timers, and downloads the iptoasn.com ASN dataset.
+  - runs `deploy/host-setup.sh`, which installs Caddy (official apt repo), sqlite3, unattended-upgrades and needrestart, creates the `lawn` user and directories, caps journald, tunes socket sysctls, enables the timers, and downloads the iptoasn.com ASN dataset.
 - **`make deploy`**
   - cross-compiles a static linux/amd64 binary and ships it, the templates, the corpus, `crawlers.yaml` and the `deploy/` files over one SSH connection;
   - re-runs the idempotent host setup, preflights the new binary, swaps it in atomically and restarts;
@@ -201,6 +201,7 @@ SSH is restricted to `admin_cidrs`, which doesn't include GitHub-hosted runners,
 
 ```sh
 make logs                                            # journalctl -u lawn -f on the host
+make patch-status                                    # pending updates, kernel, reboot needed, failed units
 make ssh
 lawn stats --since 24h                               # top offenders
 systemctl reload lawn                                # re-read ASN table + crawlers.yaml
@@ -213,6 +214,16 @@ ssh -L 9090:127.0.0.1:9090 root@<ip>                 # then curl localhost:9090/
 - **Weekly iptoasn.com refresh:** validates gzip, size and format, swaps the file in atomically, then reloads lawn.
 - **Daily `lawn verify-refresh`.**
 - **Nightly `VACUUM INTO` backup:** `/var/lib/lawn/backups/lawn-YYYY-MM-DD.db`, `quick_check`ed, newest 7 kept.
+
+**Patching and reboots.** The host keeps itself patched:
+- **Daily unattended upgrades:** Debian security updates, point releases and `-updates`, plus Caddy from its official repository.
+- **needrestart:** restarts any service still using a replaced library (OpenSSL, libc, …) right after each upgrade.
+- **Reboots at 04:30 UTC** when an upgrade asks for one. `lawn-reboot-check.timer` runs at 04:45 as a backstop: it also reboots when a newer kernel is installed than the one running. If a reboot didn't switch to the new kernel, it fails the unit instead of rebooting every day.
+- A reboot drops in-flight drips for about a minute; `lawn` and Caddy come back on their own.
+
+`make patch-status` shows the current state. `systemctl --failed` on the host surfaces a stuck reboot check.
+
+**The `lawn` binary** is patched by redeploying. CI runs `govulncheck` against the Go toolchain pinned in `go.mod` on every push and weekly, and a new Go vulnerability shows up as a failed scheduled run in GitHub's email. Dependabot opens PRs for Go modules (daily) and Actions versions (weekly). To patch: bump the `toolchain` line in `go.mod` (or merge the Dependabot PR), then run `make deploy`.
 
 **Retention.** Raw request rows older than `retention.raw_requests_days` (90) are rolled into `daily_aggregates` by the running server.
 

@@ -40,9 +40,12 @@ locals {
       { src = "lawn-verify-refresh.timer", dest = "/etc/systemd/system/lawn-verify-refresh.timer", mode = "0644" },
       { src = "lawn-backup.service", dest = "/etc/systemd/system/lawn-backup.service", mode = "0644" },
       { src = "lawn-backup.timer", dest = "/etc/systemd/system/lawn-backup.timer", mode = "0644" },
+      { src = "lawn-reboot-check.service", dest = "/etc/systemd/system/lawn-reboot-check.service", mode = "0644" },
+      { src = "lawn-reboot-check.timer", dest = "/etc/systemd/system/lawn-reboot-check.timer", mode = "0644" },
       { src = "host-setup.sh", dest = "/usr/local/lib/lawn/host-setup.sh", mode = "0755" },
       { src = "asn-refresh.sh", dest = "/usr/local/lib/lawn/asn-refresh.sh", mode = "0755" },
       { src = "backup.sh", dest = "/usr/local/lib/lawn/backup.sh", mode = "0755" },
+      { src = "reboot-check.sh", dest = "/usr/local/lib/lawn/reboot-check.sh", mode = "0755" },
       { src = "Caddyfile", dest = "/usr/local/lib/lawn/Caddyfile", mode = "0644" },
       ] : {
       path    = f.dest
