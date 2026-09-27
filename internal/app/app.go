@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/attrib"
+	"github.com/boydj/getoffmyfuckinglawn.com/internal/bots"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/config"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/drip"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/logstore"
@@ -101,7 +102,8 @@ func New(cfg config.Config, opt Options) (*App, error) {
 	a.Ranges = newRangeStore(cfg, crawlers, opt)
 	a.Classifier = newClassifier(cfg, crawlers, a.Ranges, st, opt)
 
-	egress := drip.NewEgress(cfg.Limits.DailyEgressBytes, func() time.Time { return opt.Now().UTC() })
+	// Counts bytes for /metrics only; there is no egress cap (operator decision).
+	egress := drip.NewEgress(0, func() time.Time { return opt.Now().UTC() })
 	dripper := drip.NewDripper(drip.Options{
 		ChunkBytes:  cfg.Drip.ChunkBytes,
 		Interval:    cfg.Drip.Interval,
@@ -368,6 +370,7 @@ func (a *App) registerMetrics() {
 	g("lawn_classifier_dropped_total", "Identities not queued because the queue was full.", "counter", func() float64 { return float64(a.Classifier.Stats().Dropped) })
 	g("lawn_classifier_classified_total", "Identities classified.", "counter", func() float64 { return float64(a.Classifier.Stats().Classified) })
 	g("lawn_patience_tracked", "Clients with a learned drip budget (adaptive drip).", "gauge", func() float64 { return float64(a.patience.Len()) })
+	g("lawn_classifier_ptr_lookups_total", "Reverse-DNS lookups recorded for the hosts table.", "counter", func() float64 { return float64(a.Classifier.Stats().PTRLookups) })
 	g("lawn_asn_ranges", "Ranges in the loaded ASN table.", "gauge", func() float64 { return float64(a.asnEntries.Load()) })
 	g("lawn_shame_last_build_timestamp_seconds", "Unix time of the last successful shame build.", "gauge", func() float64 { return float64(a.lastBuild.Load()) })
 }
@@ -439,5 +442,38 @@ func VerifyRefresh(ctx context.Context, cfg config.Config, opt Options, out io.W
 		return err
 	}
 	fmt.Fprintf(out, "re-verified %d identities\n", n)
+	return nil
+}
+
+// BotsOptions are the `lawn bots` flags.
+type BotsOptions struct {
+	Since       string
+	UnknownOnly bool
+	NewOnly     bool
+	All         bool
+	Limit       int
+	Details     int
+}
+
+// Bots is `lawn bots`: a private report on every bot-like client.
+func Bots(ctx context.Context, cfg config.Config, o BotsOptions, out io.Writer) error {
+	since, err := bots.ParseSince(o.Since)
+	if err != nil {
+		return err
+	}
+	crawlers, err := attrib.LoadCrawlers(cfg.CrawlersFile)
+	if err != nil {
+		return err
+	}
+	st, err := logstore.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	r, err := bots.Collect(ctx, bots.Options{DB: st.DB(), Crawlers: crawlers, Since: since, All: o.All})
+	if err != nil {
+		return err
+	}
+	bots.Write(out, r, bots.WriteOptions{UnknownOnly: o.UnknownOnly, NewOnly: o.NewOnly, Limit: o.Limit, Details: o.Details})
 	return nil
 }

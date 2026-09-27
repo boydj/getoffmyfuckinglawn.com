@@ -171,3 +171,34 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **Migration 2 adds `end_reason`, `referer`, `accept`, `accept_language` and `accept_encoding` to `requests`.**
   - `end_reason` is NULL outside `/lawn/`. Dripped responses use the drip outcome (`complete` / `cutoff` / `client_gone` / `write_error`); undripped ones use `shed` / `egress_cap` / `head`.
   - Headers are truncated (512 / 256 / 128 / 128 bytes), used for analysis only, and never published, so §8 is unaffected.
+
+## All visitors, well-behaved bots, new-bot detection (follow-up)
+
+- **No egress cap (operator decision).** `limits.daily_egress_bytes`, the closed-for-the-day page and the `egress_cap` end reason are removed. Bytes are still counted for `/metrics`. An old config that sets the key still loads, since unknown keys are ignored.
+- **No Vultr DDoS protection (operator decision).** Application connection caps are the only protection; accepted.
+- **Every visitor is classified and gets a reverse-DNS lookup, not only violators.** Well-behaved bots need identity labels, and a PTR name (e.g. `crawl-1.newbot.example`) is often the first clue to a new crawler. The lookup is off the hot path (classifier workers) and cached for the identity TTL (7 d). A clean "no PTR" is stored as `''`; DNS failures are retried.
+- **PTR names are stored unconfirmed in `hosts`.** They are a lead for a human, not a verification; forward-confirmed rDNS for known crawlers stays in `identities`. They are never published.
+- **Migration 3 adds `header_names` (sorted client header names, proxy-added ones excluded, ≤ 512 B), `proto` and `tls` to `requests`.** Which headers a client sends, plus its HTTP and TLS versions, fingerprints the software. Header order would be better still, but Go's `http.Header` doesn't keep it.
+- **Client HTTP and TLS versions come from Caddy (`header_up X-Lawn-Client-Proto`/`X-Lawn-Client-TLS`), read only from trusted peers.** The app sees HTTP/1.1 from Caddy. `header_up` overwrites any client value; verified against a real Caddy.
+- **Caddy's proxy transport uses `compression off`.** Without it, Caddy adds `Accept-Encoding: gzip` for clients that sent none, which polluted the `accept_encoding` column added in migration 2. Found and fixed while verifying the placeholders.
+- **`daily_visits` rolls up EVERY visitor per (day, ip, ua), in the same transaction as `daily_aggregates`.** Counts are requests, robots.txt fetches, bait-page views and violations. Compliant bots keep their history past the 90-day raw retention.
+- **`lawn bots` is private; the public page shows only what §8 allows.** The CLI shows PTR names, IPs and header fingerprints for the operator.
+- **"Bot-like" signals:** the UA names a bot or HTTP library, the client fetched robots.txt, entered /lawn/, sent no Accept-Language (on rows where headers were captured), or has a crawler-looking PTR. `--all` lifts the filter.
+- **Product token = the UA's self-declared bot/library name.** Browser-looking UAs with bot signals are grouped by ASN, which is how headless scrapers show up.
+- **"New" = the group's earliest UA was first seen (raw requests or `daily_visits`) within the last 7 days.**
+- **Anthropic's three crawlers now verify against `https://claude.com/crawling/bots.json`.** Anthropic's support article (re-checked 2026-09-27) publishes this list and says a source IP on it means the crawler is Anthropic's. It replaces the earlier `verify: none` TODOs, and was confirmed by fetching the list itself (26 IPv4 prefixes, Google-style JSON).
+
+## Well-behaved crawlers page (teammate)
+
+- **Eligibility: at least one GET of `/robots.txt` and zero `/lawn/` history anywhere (raw rows, `daily_visits.violations`, `daily_aggregates`).** One violation ever puts a client on the wall, never on both lists; clients that never fetched robots.txt aren't listed, because we can't tell whether they followed it.
+- **Only GET counts as reading robots.txt or seeing the bait, in raw rows, in the rollup and in `lawn bots`.** HEAD has no body, and other methods get a 405. The lead aligned the rollup and `lawn bots` to GET-only too, so every source counts the same way.
+- **Query-string variants (`/robots.txt?…`, `/?…`, `/sitemap.xml?…`) count.** The server serves the same page for them.
+- **Grouping mirrors the wall:**
+  - verified and unverifiable by claimed org, each in its own clearly labelled section;
+  - anonymous by ASN;
+  - spoofed compliant clients under their ASN with the failed claim stated, never credited to the named org.
+- **IPs go through `DisplayCIDR` plus the `publishable` check.** Only verified crawlers show /32 or /128; everything else is /24 or /48 at most.
+- **`well-behaved.json` has one entry per (status, claimed org, ASN), like `feed.json`, and adds `claimed_org`.** The page shows groups. Well-behaved clients never enter `blocklist.txt`.
+- **Rows are ordered most recently seen first; the 24h/7d/30d windows use raw rows, and all-time adds `daily_visits`.** Same rules as the wall.
+- **Collection is a single streaming scan: a flat UNION ALL over requests, `daily_visits` and `daily_aggregates`, ordered by (ip, ua).** Memory is bounded to one client pair at a time. The lead added `idx_req_ip_ua_ts` to migration 3 (not yet deployed anywhere) so the scan and the rollup walk rows in index order. The whole scan costs about 1.3× the old one on a 1M-row test.
+- **`lawn stats` gains a "Well-behaved" section that shows network labels only.**

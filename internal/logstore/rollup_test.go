@@ -192,3 +192,70 @@ func TestPruneIdentities(t *testing.T) {
 		t.Fatal("orphan not pruned")
 	}
 }
+
+func TestRollupDailyVisitsKeepsEveryVisitor(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC) // cutoff 2026-03-12
+	d1 := "2026-03-10"
+	good, bad := "GoodBot/1.0", "BadBot/1.0"
+	rows := []Request{
+		// A compliant bot: reads robots.txt, sees the bait pages, never enters /lawn/.
+		req("192.0.2.10", good, "/robots.txt", at(d1, 8, 0), at(d1, 8, 0), false, -1),
+		req("192.0.2.10", good, "/", at(d1, 8, 1), at(d1, 8, 1)+5, false, -1),
+		req("192.0.2.10", good, "/sitemap.xml", at(d1, 8, 2), at(d1, 8, 2), false, -1),
+		req("192.0.2.10", good, "/shame/", at(d1, 9, 0), at(d1, 9, 0), false, -1),
+		// A HEAD returns no body: counted as a request, not as reading robots.txt.
+		{TsStart: at(d1, 8, 30), TsEnd: at(d1, 8, 30), IP: "192.0.2.10", UserAgent: good, Method: "HEAD", Path: "/robots.txt", Depth: -1},
+		// A violator.
+		req("192.0.2.20", bad, "/", at(d1, 10, 0), at(d1, 10, 0), false, -1),
+		req("192.0.2.20", bad, "/lawn/x", at(d1, 10, 1), at(d1, 10, 3), true, 0),
+	}
+	if err := s.InsertRequests(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 { // idempotent: the second run finds nothing left to roll
+		if _, err := s.Rollup(ctx, now, 90, 10*minute); err != nil {
+			t.Fatal(err)
+		}
+	}
+	type visit struct{ requests, robots, bait, violations, first, last int64 }
+	get := func(ip, ua string) visit {
+		var v visit
+		if err := s.DB().QueryRow(`SELECT requests, robots, bait_views, violations, first_ts, last_ts
+		 FROM daily_visits WHERE day=? AND ip=? AND user_agent=?`, d1, ip, ua).
+			Scan(&v.requests, &v.robots, &v.bait, &v.violations, &v.first, &v.last); err != nil {
+			t.Fatalf("%s: %v", ua, err)
+		}
+		return v
+	}
+	if g := get("192.0.2.10", good); g != (visit{5, 1, 2, 0, at(d1, 8, 0), at(d1, 9, 0)}) {
+		t.Errorf("compliant bot: %+v", g)
+	}
+	if b := get("192.0.2.20", bad); b != (visit{2, 0, 1, 1, at(d1, 10, 0), at(d1, 10, 3)}) {
+		t.Errorf("violator: %+v", b)
+	}
+	var raw int
+	s.DB().QueryRow(`SELECT COUNT(*) FROM requests`).Scan(&raw)
+	if raw != 0 {
+		t.Errorf("raw rows left: %d", raw)
+	}
+}
+
+func TestHosts(t *testing.T) {
+	ctx := context.Background()
+	s := openTemp(t)
+	if _, ok, err := s.GetHost(ctx, "192.0.2.1"); ok || err != nil {
+		t.Fatalf("empty: ok=%v err=%v", ok, err)
+	}
+	if err := s.UpsertHost(ctx, Host{IP: "192.0.2.1", PTR: "crawl-1.example.net", CheckedAt: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertHost(ctx, Host{IP: "192.0.2.1", PTR: "", CheckedAt: 9}); err != nil {
+		t.Fatal(err)
+	}
+	h, ok, err := s.GetHost(ctx, "192.0.2.1")
+	if !ok || err != nil || h.PTR != "" || h.CheckedAt != 9 {
+		t.Fatalf("got %+v ok=%v err=%v", h, ok, err)
+	}
+}

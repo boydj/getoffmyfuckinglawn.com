@@ -61,3 +61,26 @@ func TestVersion(t *testing.T) {
 		t.Fatalf("version: %v %q", err, out.String())
 	}
 }
+
+func TestBotsCommand(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LAWN_DB_PATH", filepath.Join(dir, "lawn.db"))
+	t.Setenv("LAWN_CRAWLERS_FILE", "../../config/crawlers.yaml")
+	var out, errb bytes.Buffer
+	if err := run([]string{"bots", "-config", ""}, &out, &errb); err != nil {
+		t.Fatalf("bots: %v (%s)", err, errb.String())
+	}
+	if !strings.Contains(out.String(), "Bots, last 7d") {
+		t.Errorf("default window should be 7d: %q", out.String())
+	}
+	out.Reset()
+	if err := run([]string{"bots", "-config", "", "--since", "all", "--unknown"}, &out, &errb); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "all data kept") {
+		t.Errorf("--since all: %q", out.String())
+	}
+	if err := run([]string{"bots", "-config", "", "--since", "yesterday"}, &out, &errb); err == nil {
+		t.Error("bad --since should fail")
+	}
+}

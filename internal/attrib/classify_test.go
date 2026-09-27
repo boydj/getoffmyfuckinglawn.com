@@ -375,7 +375,7 @@ func TestReverifyStale(t *testing.T) {
 	if err := s.InsertRequests(ctx, []logstore.Request{
 		mk("192.0.2.10", gb, true),         // A: violator, no identity -> classify
 		mk("192.0.2.11", gb, true),         // B: stale identity -> reclassify
-		mk("192.0.2.99", "Firefox", false), // C: non-violator, no identity -> skip
+		mk("192.0.2.99", "Firefox", false), // C: non-violator, no identity -> classify (anonymous)
 		mk("192.0.2.12", "NoneBot", true),  // E: fresh identity -> skip
 	}); err != nil {
 		t.Fatal(err)
@@ -395,8 +395,8 @@ func TestReverifyStale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 2 {
-		t.Fatalf("n=%d want 2", n)
+	if n != 3 {
+		t.Fatalf("n=%d want 3", n)
 	}
 	if id, ok, _ := s.GetIdentity(ctx, "192.0.2.10", gb); !ok || id.Status != logstore.StatusVerified {
 		t.Errorf("A: %+v %v", id, ok)
@@ -404,8 +404,13 @@ func TestReverifyStale(t *testing.T) {
 	if id, _, _ := s.GetIdentity(ctx, "192.0.2.11", gb); id.Status != logstore.StatusVerified || id.CheckedAt != now {
 		t.Errorf("B: %+v", id)
 	}
-	if _, ok, _ := s.GetIdentity(ctx, "192.0.2.99", "Firefox"); ok {
-		t.Error("C classified")
+	if id, ok, _ := s.GetIdentity(ctx, "192.0.2.99", "Firefox"); !ok || id.Status != logstore.StatusAnonymous {
+		t.Errorf("C: non-violators must be classified too: %+v %v", id, ok)
+	}
+	// Reverse DNS is recorded for every job's IP (the test resolver has no
+	// PTR for 192.0.2.99, which is cached as "").
+	if _, ok, _ := s.GetHost(ctx, "192.0.2.99"); !ok {
+		t.Error("C: host row not recorded")
 	}
 	if id, _, _ := s.GetIdentity(ctx, "192.0.2.77", gb); id.CheckedAt != old {
 		t.Errorf("D touched: %+v", id)
@@ -424,5 +429,66 @@ func TestSetCrawlers(t *testing.T) {
 	c.SetCrawlers(testCrawlers(t))
 	if id := c.Classify(context.Background(), "192.0.2.1", "NoneBot"); id.Status != logstore.StatusUnverifiable {
 		t.Fatalf("%+v", id)
+	}
+}
+
+// hostMemStore adds the optional HostStore to memStore.
+type hostMemStore struct {
+	*memStore
+	hmu   sync.Mutex
+	hosts map[string]logstore.Host
+}
+
+func (s *hostMemStore) GetHost(_ context.Context, ip string) (logstore.Host, bool, error) {
+	s.hmu.Lock()
+	defer s.hmu.Unlock()
+	h, ok := s.hosts[ip]
+	return h, ok, nil
+}
+
+func (s *hostMemStore) UpsertHost(_ context.Context, h logstore.Host) error {
+	s.hmu.Lock()
+	defer s.hmu.Unlock()
+	s.hosts[h.IP] = h
+	return nil
+}
+
+func TestRecordHostPTR(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	res := &fakeResolver{
+		ptr:  map[string][]string{"198.51.100.1": {"Crawl-7.NewBot.Example."}},
+		errs: map[string]error{"198.51.100.3": errors.New("servfail")},
+	}
+	st := &hostMemStore{memStore: newMemStore(), hosts: map[string]logstore.Host{}}
+	c := NewClassifier(Options{Crawlers: testCrawlers(t), Resolver: res, Store: st,
+		TTL: 7 * 24 * time.Hour, DNSTimeout: time.Second, Now: func() time.Time { return now }})
+	ctx := context.Background()
+
+	c.handle(ctx, "198.51.100.1", "NewBot/0.1") // PTR present
+	c.handle(ctx, "198.51.100.2", "curl/8")     // NXDOMAIN
+	c.handle(ctx, "198.51.100.3", "x")          // resolver failure
+	if h := st.hosts["198.51.100.1"]; h.PTR != "crawl-7.newbot.example" || h.CheckedAt != now.UnixMilli() {
+		t.Errorf("ptr row: %+v", h)
+	}
+	if h, ok := st.hosts["198.51.100.2"]; !ok || h.PTR != "" {
+		t.Errorf("no-PTR must be cached as empty: %+v ok=%v", h, ok)
+	}
+	if _, ok := st.hosts["198.51.100.3"]; ok {
+		t.Error("DNS failure must not be cached")
+	}
+	// Anonymous identities are still classified alongside.
+	if id, ok := st.get("198.51.100.2", "curl/8"); !ok || id.Status != logstore.StatusAnonymous {
+		t.Errorf("identity: %+v ok=%v", id, ok)
+	}
+	// Fresh rows are not looked up again; stale ones are.
+	before := c.Stats().PTRLookups
+	c.handle(ctx, "198.51.100.1", "OtherUA/1")
+	if c.Stats().PTRLookups != before {
+		t.Error("fresh host row was looked up again")
+	}
+	now = now.Add(8 * 24 * time.Hour)
+	c.handle(ctx, "198.51.100.1", "OtherUA/1")
+	if c.Stats().PTRLookups != before+1 {
+		t.Error("stale host row was not refreshed")
 	}
 }

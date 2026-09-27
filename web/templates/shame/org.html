@@ -1,5 +1,5 @@
 {{define "shame-org"}}{{template "shame-head" .Title}}
-<p><a href="../../">&larr; Wall of Shame</a></p>
+<p><a href="../../">&larr; Wall of Shame</a> · <a href="../../well-behaved/">Well-behaved crawlers</a></p>
 <h1>{{trunc .G.Name 100}}</h1>
 <p>{{range .G.Statuses}}{{template "shame-badge" .}}{{end}}{{with .G.Sub}} <small>{{.}}</small>{{end}}</p>
 <p class="lede">{{.Note}}</p>

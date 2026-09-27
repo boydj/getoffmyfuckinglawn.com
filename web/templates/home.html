@@ -26,7 +26,7 @@
 <dt>How visitors reach the lawn</dt>
 <dd>Only through links a human would never follow: entries in <code>/sitemap.xml</code> and links on this page that are hidden from view and from screen readers and marked <code>rel="nofollow"</code>. Every one of them points into the disallowed prefix.</dd>
 <dt>What is logged</dt>
-<dd>Every request to every route: time, client IP, origin ASN (from the public <a href="https://iptoasn.com/">iptoasn.com</a> dataset), user-agent string, path, maze depth, bytes sent, and how long the connection was held.</dd>
+<dd>Every request to every route: time, client IP, origin ASN (from the public <a href="https://iptoasn.com/">iptoasn.com</a> dataset), user-agent string, path, maze depth, bytes sent, how long the connection was held and how it ended, the names of the request headers sent plus the Referer, Accept and Accept-Language/-Encoding values, the HTTP and TLS versions used, and the reverse-DNS name of the client address. Raw records are kept for 90 days, then reduced to per-day counts. Only what is described under "What is published" ever appears on this site.</dd>
 <dt>How crawlers are identified</dt>
 <dd>User-agent strings are matched against a list of known crawlers. Where the vendor publishes an official verification method, we use it: reverse DNS with a forward-confirming lookup, or the vendor's published IP ranges. The result is one of four labels:
 <ul>
@@ -40,9 +40,9 @@
 <dt>"Read the rules, ignored them"</dt>
 <dd>Within one session, the client fetched <code>/robots.txt</code> before its first request into <code>/lawn/</code>.</dd>
 <dt>What is published</dt>
-<dd>Only facts: organisation or network, user-agent string, number of disallowed fetches, and time held. We make no claims about anyone's intent. Individual IP addresses are published only for <em>verified</em> crawlers, which run from the vendor's own published infrastructure. Everything else is shown at most as a /24 (IPv4) or /48 (IPv6) network plus its ASN, so no individual residential address is ever published.</dd>
+<dd>Only facts: organisation or network, user-agent string, number of disallowed fetches, and time held; for <a href="/shame/well-behaved/">well-behaved crawlers</a>, how often they read <code>robots.txt</code> and visited. A crawler is listed as well-behaved only if it fetched <code>robots.txt</code> and has never requested anything under <code>/lawn/</code>. We make no claims about anyone's intent. Individual IP addresses are published only for <em>verified</em> crawlers, which run from the vendor's own published infrastructure. Everything else is shown at most as a /24 (IPv4) or /48 (IPv6) network plus its ASN, so no individual residential address is ever published.</dd>
 <dt>Machine-readable data</dt>
-<dd><a href="/shame/feed.json">/shame/feed.json</a> (all offenders) and <a href="/shame/blocklist.txt">/shame/blocklist.txt</a> (CIDRs of verified crawlers plus spoofers above a violation threshold).</dd>
+<dd><a href="/shame/feed.json">/shame/feed.json</a> (all offenders), <a href="/shame/well-behaved.json">/shame/well-behaved.json</a> (crawlers that followed the rules) and <a href="/shame/blocklist.txt">/shame/blocklist.txt</a> (CIDRs of verified crawlers plus spoofers above a violation threshold).</dd>
 <dt>Corrections</dt>
 <dd>If you run a crawler listed here and believe the classification is wrong, publish an official verification method (reverse DNS or an IP range list) and it will be used.</dd>
 </dl>

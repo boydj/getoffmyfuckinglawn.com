@@ -52,8 +52,6 @@ limits:
   max_conns_per_asn: 200
   # Concurrent dripping connections per client IP.
   max_conns_per_ip: 20
-  # Daily /lawn/ egress cap (5 GiB); after it, a tiny static page until UTC midnight.
-  daily_egress_bytes: 5368709120
 
 session:
   # Gap that splits one client's requests into separate sessions.

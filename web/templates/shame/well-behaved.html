@@ -1,0 +1,31 @@
+{{define "shame-well-behaved"}}{{template "shame-head" "Well-behaved crawlers · getoffmyfuckinglawn.com"}}
+<p><a href="../">&larr; Wall of Shame</a></p>
+<h1>Well-behaved crawlers</h1>
+<p class="lede">Read the rules. Stayed off the lawn. Every client below fetched our <a href="/robots.txt">robots.txt</a> and has never requested anything under <code>/lawn/</code>, as far back as our records go. Thank you. If one of them ever does, it moves to the <a href="../">Wall of Shame</a>.</p>
+<p class="note">Generated {{.Generated}}. Rebuilt every few minutes. Also available as <a href="../well-behaved.json">well-behaved.json</a>. Listed: {{.Groups}} groups, {{.Clients}} clients (IP address and user agent pairs), {{.Robots}} robots.txt fetches, {{.Requests}} requests.</p>
+<p class="note">Clients that never fetched robots.txt are not listed: we can't tell whether they followed it. "Saw the bait" means the client requested a page carrying hidden links into <code>/lawn/</code> (the homepage or <code>/sitemap.xml</code>). Requests counts every request, any path. Rows are ordered by most recently seen.</p>
+{{range .Sections}}
+<h2 id="{{.ID}}">{{.Title}}</h2>
+<p class="lede">{{.Lede}}</p>
+{{if .Rows}}<div class="tw"><table>
+<thead><tr><th>Name</th><th class="l">Status</th><th class="l">User agents</th><th class="l">Networks</th><th>Clients</th><th>robots.txt fetches</th><th>Requests 24h</th><th>Requests 7d</th><th>Requests 30d</th><th>Requests all</th><th>Saw the bait</th><th>First seen</th><th>Last seen</th></tr></thead>
+<tbody>
+{{range .Rows}}{{$r := .}}<tr><td class="w">{{trunc .G.Name 80}}{{with .G.Sub}}<br><small>{{trunc . 160}}</small>{{end}}{{with .Network}}<br><small>{{trunc . 80}}</small>{{end}}{{if .NetMore}} <small>+{{.NetMore}} more</small>{{end}}</td><td class="l">{{template "shame-badge" .G.Kind}}</td><td class="l w">{{range $i, $u := .UAs}}{{if $i}}<br>{{end}}<code>{{if $u.UA}}{{trunc $u.UA $r.UALen}}{{else}}(empty){{end}}</code>{{end}}{{if .UAMore}}<br><small>+{{.UAMore}} more</small>{{end}}</td><td class="l"><code>{{range $i, $c := .CIDRs}}{{if $i}}<br>{{end}}{{$c}}{{end}}</code>{{if .CIDRMore}}<br><small>+{{.CIDRMore}} more</small>{{end}}</td><td>{{.G.Clients}}</td>{{with .G.All}}<td>{{.Robots}}</td>{{end}}{{range .G.W}}<td>{{.Requests}}</td>{{end}}{{with .G.All}}<td>{{if .SawBait}}yes{{else}}no{{end}}</td><td>{{when .FirstSeen}}</td><td>{{when .LastSeen}}</td>{{end}}</tr>
+{{end}}</tbody>
+</table></div>
+{{if gt .Total (len .Rows)}}<p class="note">Showing {{len .Rows}} of {{.Total}}, most recently seen first. The full list is in <a href="../well-behaved.json">well-behaved.json</a>.</p>{{end}}
+{{else}}<p class="note">Nobody here yet.</p>{{end}}
+{{end}}
+<h2 id="labels">What the labels mean</h2>
+<dl>
+<dt>{{template "shame-badge" "verified"}}</dt><dd>User agent matched a known crawler and the source address passed that vendor's published verification. Only these rows show individual IPs.</dd>
+<dt>{{template "shame-badge" "unverifiable"}}</dt><dd>User agent claims a known crawler whose vendor publishes no verification method we could find. Not confirmed.</dd>
+<dt>{{template "shame-badge" "spoofed"}}</dt><dd>User agent claimed a known crawler, but the source address failed that vendor's published verification. Shown under the network it came from, not the name it claimed.</dd>
+<dt>{{template "shame-badge" "anonymous"}}</dt><dd>No known crawler user agent. Attributed only to the network (ASN).</dd>
+</dl>
+<p class="note">Networks other than verified crawlers are shown as a /24 (IPv4) or /48 (IPv6) at most. Windows (24h, 7d, 30d) count raw requests; "all" also includes daily summaries of older traffic. Listing here states what our logs show and nothing more.</p>
+</main>
+{{template "footer" .RobotsTxt}}
+</body>
+</html>
+{{end}}

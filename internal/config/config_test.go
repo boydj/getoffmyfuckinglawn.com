@@ -16,7 +16,7 @@ func TestDefaultsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Drip.Interval != time.Second || c.Limits.DailyEgressBytes != 5368709120 || c.Session.Gap != 10*time.Minute {
+	if c.Drip.Interval != time.Second || c.Session.Gap != 10*time.Minute {
 		t.Fatalf("unexpected defaults: %+v", c)
 	}
 	if len(c.Proxies) != 1 || c.Proxies[0].String() != "127.0.0.1/32" {
@@ -34,7 +34,7 @@ func TestLoadFileAndEnv(t *testing.T) {
 listen: "0.0.0.0:1234"
 trusted_proxies: ["10.0.0.1", "::1/128"]
 drip: { chunk_bytes: 32, interval: 250ms, max_duration: 2m }
-limits: { max_conns_global: 10, max_conns_per_asn: 5, max_conns_per_ip: 2, daily_egress_bytes: 1000 }
+limits: { max_conns_global: 10, max_conns_per_asn: 5, max_conns_per_ip: 2, daily_egress_bytes: 1000 } # removed key: must be ignored
 `
 	if err := os.WriteFile(p, []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
@@ -55,7 +55,7 @@ limits: { max_conns_global: 10, max_conns_per_asn: 5, max_conns_per_ip: 2, daily
 	if c.Drip.ChunkBytes != 32 || c.Drip.Interval != 250*time.Millisecond || c.Drip.MaxDuration != 2*time.Minute {
 		t.Fatalf("drip: %+v", c.Drip)
 	}
-	if c.Limits.MaxConnsPerIP != 2 || c.Limits.DailyEgressBytes != 1000 {
+	if c.Limits.MaxConnsPerIP != 2 {
 		t.Fatalf("limits: %+v", c.Limits)
 	}
 	// Unset keys keep defaults.

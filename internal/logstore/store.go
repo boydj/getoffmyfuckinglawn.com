@@ -47,6 +47,17 @@ type Request struct {
 	Accept         string
 	AcceptLanguage string
 	AcceptEncoding string
+	// Added by migration 3. "" = NULL.
+	HeaderNames string // sorted client header names, comma-separated
+	Proto       string // client HTTP version (from the proxy)
+	TLS         string // "version cipher alpn" (from the proxy)
+}
+
+// Host is one row of hosts: reverse DNS for an IP.
+type Host struct {
+	IP        string
+	PTR       string // "" = no PTR record
+	CheckedAt int64  // unix ms
 }
 
 // RobotsFetch is one row of robots_fetches.
@@ -159,8 +170,8 @@ func (s *Store) InsertRequests(ctx context.Context, rows []Request) error {
 	defer tx.Rollback()
 	st, err := tx.PrepareContext(ctx, `INSERT INTO requests
 	 (ts_start, ts_end, ip, asn, asn_org, user_agent, method, path, depth, is_violation, bytes_sent, dripped, status,
-	  end_reason, referer, accept, accept_language, accept_encoding)
-	 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	  end_reason, referer, accept, accept_language, accept_encoding, header_names, proto, tls)
+	 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -170,7 +181,8 @@ func (s *Store) InsertRequests(ctx context.Context, rows []Request) error {
 		if _, err := st.ExecContext(ctx, r.TsStart, nullInt(r.TsEnd, r.TsEnd == 0), r.IP,
 			nullInt(int64(r.ASN), r.ASN == 0), nullStr(r.ASNOrg), r.UserAgent, r.Method, r.Path,
 			nullInt(int64(r.Depth), r.Depth < 0), b2i(r.IsViolation), r.BytesSent, b2i(r.Dripped), r.Status,
-			nullStr(r.EndReason), nullStr(r.Referer), nullStr(r.Accept), nullStr(r.AcceptLanguage), nullStr(r.AcceptEncoding)); err != nil {
+			nullStr(r.EndReason), nullStr(r.Referer), nullStr(r.Accept), nullStr(r.AcceptLanguage), nullStr(r.AcceptEncoding),
+			nullStr(r.HeaderNames), nullStr(r.Proto), nullStr(r.TLS)); err != nil {
 			return fmt.Errorf("logstore: insert request: %w", err)
 		}
 	}
@@ -228,4 +240,27 @@ func (s *Store) GetIdentity(ctx context.Context, ip, ua string) (Identity, bool,
 	}
 	id.ClaimedOrg, id.Method = org.String, method.String
 	return id, true, nil
+}
+
+// GetHost returns the cached reverse-DNS row for ip, or ok=false.
+func (s *Store) GetHost(ctx context.Context, ip string) (Host, bool, error) {
+	var h Host
+	err := s.db.QueryRowContext(ctx, `SELECT ip, ptr, checked_at FROM hosts WHERE ip = ?`, ip).Scan(&h.IP, &h.PTR, &h.CheckedAt)
+	if err == sql.ErrNoRows {
+		return h, false, nil
+	}
+	if err != nil {
+		return h, false, fmt.Errorf("logstore: get host: %w", err)
+	}
+	return h, true, nil
+}
+
+// UpsertHost stores a reverse-DNS result.
+func (s *Store) UpsertHost(ctx context.Context, h Host) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO hosts (ip, ptr, checked_at) VALUES (?,?,?)
+	 ON CONFLICT(ip) DO UPDATE SET ptr=excluded.ptr, checked_at=excluded.checked_at`, h.IP, h.PTR, h.CheckedAt)
+	if err != nil {
+		return fmt.Errorf("logstore: upsert host: %w", err)
+	}
+	return nil
 }

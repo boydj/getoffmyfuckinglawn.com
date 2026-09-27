@@ -29,15 +29,14 @@ var routeNames = [numRoutes]string{"other", "home", "robots", "sitemap", "lawn",
 
 // Metrics are hot-path counters; all fields are atomics.
 type Metrics struct {
-	Requests     [numRoutes]atomic.Uint64
-	Violations   atomic.Uint64
-	Dripped      atomic.Uint64
-	Fast         atomic.Uint64
-	LimitShed    atomic.Uint64
-	EgressCapped atomic.Uint64
-	BytesSent    atomic.Uint64
-	LogDropped   atomic.Uint64
-	DripEnds     [4]atomic.Uint64 // by drip.Outcome
+	Requests   [numRoutes]atomic.Uint64
+	Violations atomic.Uint64
+	Dripped    atomic.Uint64
+	Fast       atomic.Uint64
+	LimitShed  atomic.Uint64
+	BytesSent  atomic.Uint64
+	LogDropped atomic.Uint64
+	DripEnds   [4]atomic.Uint64 // by drip.Outcome
 }
 
 func (m *Metrics) observeDrip(o drip.Outcome) {
@@ -100,9 +99,8 @@ func (m *MetricsRegistry) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	}
 	counter("lawn_violations_total", "Requests to /lawn/*.", mt.Violations.Load())
 	counter("lawn_dripped_total", "Maze pages served through the slow drip.", mt.Dripped.Load())
-	counter("lawn_fast_total", "Maze pages served fast (limits, HEAD, egress cap).", mt.Fast.Load())
+	counter("lawn_fast_total", "Maze pages served fast (limits, HEAD).", mt.Fast.Load())
 	counter("lawn_limit_shed_total", "Maze pages served fast because a connection cap was hit.", mt.LimitShed.Load())
-	counter("lawn_egress_capped_total", "Maze requests answered with the closed page after the daily egress cap.", mt.EgressCapped.Load())
 	counter("lawn_bytes_sent_total", "Response body bytes sent.", mt.BytesSent.Load())
 	counter("lawn_log_dropped_total", "Log records dropped because the writer queue was full.", mt.LogDropped.Load())
 	fmt.Fprintf(b, "# HELP lawn_drip_end_total Dripped maze responses by how they ended.\n# TYPE lawn_drip_end_total counter\n")
@@ -114,11 +112,6 @@ func (m *MetricsRegistry) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	}
 	gauge("lawn_active_drips", "Connections currently being dripped.", float64(m.srv.d.Limiter.Active()))
 	gauge("lawn_egress_today_bytes", "Bytes sent since UTC midnight.", float64(m.srv.d.Egress.Today()))
-	egressCapped := 0.0
-	if m.srv.d.Egress.Exceeded() {
-		egressCapped = 1
-	}
-	gauge("lawn_egress_cap_reached", "1 if today's egress cap is exhausted.", egressCapped)
 
 	m.mu.Lock()
 	extras := append([]Gauge(nil), m.extras...)

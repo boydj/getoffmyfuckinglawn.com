@@ -19,6 +19,7 @@ Clients that respect `robots.txt`, search engines included, are never trapped an
 | `/lawn/*` | The maze. Each hit is a violation |
 | `/shame/`, `/shame/org/<slug>/` | Static leaderboard and per-org pages, rebuilt every 5 min |
 | `/shame/feed.json`, `/shame/blocklist.txt` | Machine-readable offenders; CIDRs of verified and spoofing offenders |
+| `/shame/well-behaved/`, `/shame/well-behaved.json` | Crawlers that read `robots.txt` and have never entered `/lawn/` |
 | `/healthz` | `ok` |
 | `/metrics` | Prometheus text, **admin listener only** (`127.0.0.1:9090`) |
 
@@ -33,7 +34,6 @@ Clients that respect `robots.txt`, search engines included, are never trapped an
 
 **Limits**
 - Beyond 5000 connections in total, 200 per ASN, or 20 per IP, pages are served fast instead of dripped, and still logged. Load shedding never returns a 5xx.
-- A daily egress cap switches `/lawn/*` to a tiny static page until UTC midnight.
 
 **The hot path** never blocks on SQLite or DNS. Logging goes through a buffered channel to a batched SQLite (WAL) writer. Crawler verification (reverse DNS with forward confirmation, or vendor-published IP ranges) runs in a background worker pool, and results are cached in `identities` for 7 days.
 
@@ -94,6 +94,8 @@ lawn build-shame               # one-off leaderboard build into public_dir/shame
 lawn verify-refresh            # refetch vendor IP ranges, re-verify stale identities
 lawn stats [--since 24h|7d|30d|all] [--limit N]   # top offenders to stdout
 lawn gen-robots                # print robots.txt in effect (also validates the config)
+lawn bots [--since 7d|36h|all] [--unknown] [--new] [--all] [--limit N] [--details N]
+                               # private report on every bot seen, compliant or not
 ```
 
 - **SIGHUP** (`systemctl reload lawn`) reloads the ASN table and `crawlers.yaml`.
@@ -233,7 +235,6 @@ ssh -L 9090:127.0.0.1:9090 root@<ip>                 # then curl localhost:9090/
 - `client_gone`: the client hung up.
 - `write_error`
 - `shed`: over a connection cap.
-- `egress_cap`
 - `head`
 
 `referer`, `accept`, `accept_language` and `accept_encoding` are stored too, for analysis only; they are never published. Per-crawler summary:
@@ -248,7 +249,19 @@ GROUP BY 1,2 ORDER BY n DESC LIMIT 30;"
 
 `/metrics` also exposes `lawn_drip_end_total{reason=...}` and `lawn_patience_tracked`.
 
-**Retention.** Raw request rows older than `retention.raw_requests_days` (90) are rolled into `daily_aggregates` by the running server.
+**Spotting new bots (`lawn bots`).** Every visitor is logged and classified, not only violators, and every client IP gets a reverse-DNS lookup. `lawn bots` (private, never published) groups every client that looks automated by the product name in its user agent:
+- **What counts as automated:** the UA names a bot or an HTTP library, or the client fetched `robots.txt`, entered `/lawn/`, sent no `Accept-Language`, or has a crawler-looking reverse-DNS name.
+- **Browser-looking UAs** with those signals are grouped by network instead, which is how headless scrapers show up.
+- **Each group gets a verdict:** `compliant`, `entered /lawn/`, `read robots.txt, entered /lawn/`, or `never fetched robots.txt`.
+- **Flags:** `NEW` for groups first seen in the last 7 days, `UNKNOWN` for groups not in `crawlers.yaml`.
+- **Detail blocks** for unknown and new groups: sample UA, contact URL, reverse-DNS domains, networks, header fingerprint, HTTP/TLS versions, and a `crawlers.yaml` stub to complete from the vendor's docs.
+
+```sh
+lawn bots --since 7d --unknown     # what's new that we don't recognise?
+lawn bots --since all              # everything, including rolled-up history
+```
+
+**Retention.** Raw request rows older than `retention.raw_requests_days` (90) are rolled into `daily_aggregates` (violators) and `daily_visits` (every visitor) by the running server.
 
 ### Backups and restore
 
@@ -274,7 +287,6 @@ This deletes the instance (with its database and on-box backups), the firewall g
 ### Cost and isolation
 
 - **Cost:** check Vultr's current pricing for `vc2-2c-2gb`. Vultr DNS is free, and Vultr automatic backups are off because the box keeps its own.
-- **Egress:** capped by `limits.daily_egress_bytes` (5 GiB/day by default, about 150 GB/month).
 - **Isolation:** don't co-host anything else on the box or reuse its IP. Only 80/443 and ICMP are open to the world, and password SSH is off.
 
 ## Status

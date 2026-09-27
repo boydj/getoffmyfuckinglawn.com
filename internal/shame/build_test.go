@@ -219,7 +219,7 @@ func TestBuildAtomicSwapTwice(t *testing.T) {
 		t.Errorf("public dir: %s", got)
 	}
 	root := filepath.Join(opt.PublicDir, "shame")
-	if strings.Join(listDir(t, root), ",") != "blocklist.txt,feed.json,index.html,org" {
+	if strings.Join(listDir(t, root), ",") != "blocklist.txt,feed.json,index.html,org,well-behaved,well-behaved.json" {
 		t.Errorf("shame dir: %v", listDir(t, root))
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
@@ -361,8 +361,8 @@ func TestBuildLargeFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("%d html pages, biggest %d bytes", n, biggest)
-	if n != len(r.Pages)+1 {
-		t.Errorf("pages written %d want %d", n, len(r.Pages)+1)
+	if n != len(r.Pages)+2 { // + index.html and well-behaved/index.html
+		t.Errorf("pages written %d want %d", n, len(r.Pages)+2)
 	}
 	idx := read(t, filepath.Join(root, "index.html"))
 	if !strings.Contains(idx, "Showing the top") {

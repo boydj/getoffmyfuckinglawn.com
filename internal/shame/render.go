@@ -138,7 +138,7 @@ func parseTemplates(opt Options) (*template.Template, error) {
 	if err != nil {
 		return nil, fmt.Errorf("shame: templates: %w", err)
 	}
-	for _, name := range []string{"style", "footer", "shame-index", "shame-org"} {
+	for _, name := range []string{"style", "footer", "shame-index", "shame-org", "shame-well-behaved"} {
 		if t.Lookup(name) == nil {
 			return nil, fmt.Errorf("shame: template %q not defined", name)
 		}
@@ -411,6 +411,26 @@ func writeAll(ctx context.Context, t *template.Template, r *Report, opt Options,
 		if err := writeFile(filepath.Join(d, "index.html"), buf.Bytes()); err != nil {
 			return err
 		}
+	}
+	wb, err := renderWellBehaved(t, r, opt.RobotsTxt)
+	if err != nil {
+		return err
+	}
+	if len(wb) >= MaxPageBytes {
+		r.Warnings = append(r.Warnings, fmt.Sprintf("shame/well-behaved/index.html is %d bytes (limit %d)", len(wb), MaxPageBytes))
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "well-behaved"), 0o755); err != nil {
+		return fmt.Errorf("shame: %w", err)
+	}
+	if err := writeFile(filepath.Join(dir, "well-behaved", "index.html"), wb); err != nil {
+		return err
+	}
+	wbFeed, err := json.MarshalIndent(r.WellBehavedFeed, "", " ")
+	if err != nil {
+		return fmt.Errorf("shame: well-behaved.json: %w", err)
+	}
+	if err := writeFile(filepath.Join(dir, "well-behaved.json"), append(wbFeed, '\n')); err != nil {
+		return err
 	}
 	feed, err := json.MarshalIndent(r.Feed, "", " ")
 	if err != nil {

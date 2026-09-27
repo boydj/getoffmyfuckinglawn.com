@@ -35,8 +35,17 @@ www.{$LAWN_DOMAIN} {
 	reverse_proxy 127.0.0.1:8080 {
 		# Flush every write immediately so each drip chunk reaches the client.
 		flush_interval -1
+		# How the client connected, for telling crawlers apart. header_up
+		# overwrites any client-supplied value, and the app reads these only
+		# from a trusted proxy.
+		header_up X-Lawn-Client-Proto {http.request.proto}
+		header_up X-Lawn-Client-TLS "{http.request.tls.version} {http.request.tls.cipher_suite} {http.request.tls.proto}"
 		transport http {
 			dial_timeout 3s
+			# Otherwise the transport adds "Accept-Encoding: gzip" when the
+			# client sent none, and the app would log Caddy's header as the
+			# client's.
+			compression off
 		}
 	}
 }

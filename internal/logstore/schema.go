@@ -61,10 +61,45 @@ CREATE TABLE daily_aggregates (
 	// 2: why each request ended, and request headers that help tell real
 	// crawlers from scripts. Stored for analysis only; never published.
 	`
-ALTER TABLE requests ADD COLUMN end_reason TEXT;       -- complete|cutoff|client_gone|write_error|shed|egress_cap|head; NULL outside /lawn/
+ALTER TABLE requests ADD COLUMN end_reason TEXT;       -- complete|cutoff|client_gone|write_error|shed|head (egress_cap in older rows); NULL outside /lawn/
 ALTER TABLE requests ADD COLUMN referer TEXT;
 ALTER TABLE requests ADD COLUMN accept TEXT;
 ALTER TABLE requests ADD COLUMN accept_language TEXT;
 ALTER TABLE requests ADD COLUMN accept_encoding TEXT;
+`,
+	// 3: data for spotting new bots and reporting well-behaved ones. All
+	// private: nothing here is published beyond what section 8 allows.
+	`
+ALTER TABLE requests ADD COLUMN header_names TEXT;  -- sorted names of client-sent headers (proxy-added ones excluded)
+ALTER TABLE requests ADD COLUMN proto TEXT;         -- client HTTP version as seen by Caddy, e.g. HTTP/2.0
+ALTER TABLE requests ADD COLUMN tls TEXT;           -- "version cipher alpn" as seen by Caddy
+CREATE INDEX idx_req_ts ON requests(ts_start);
+-- Per-client scans (shame, rollup) walk rows in (ip, user_agent) order.
+CREATE INDEX idx_req_ip_ua_ts ON requests(ip, user_agent, ts_start);
+
+-- Reverse DNS for every visiting IP (not forward-confirmed; that is
+-- identities' job for known crawlers). ptr '' = no PTR record.
+CREATE TABLE hosts (
+  ip         TEXT PRIMARY KEY,
+  ptr        TEXT NOT NULL,
+  checked_at INTEGER NOT NULL   -- unix ms
+);
+
+-- One row per (UTC day, ip, user_agent) for EVERY visitor rolled out of
+-- requests by retention, so compliant bots keep their history too.
+CREATE TABLE daily_visits (
+  day         TEXT NOT NULL,
+  ip          TEXT NOT NULL,
+  user_agent  TEXT NOT NULL,
+  asn         INTEGER,
+  asn_org     TEXT,
+  requests    INTEGER NOT NULL,
+  robots      INTEGER NOT NULL,   -- /robots.txt fetches
+  bait_views  INTEGER NOT NULL,   -- fetches of pages carrying bait links (/, /sitemap.xml)
+  violations  INTEGER NOT NULL,   -- /lawn/ requests
+  first_ts    INTEGER NOT NULL,
+  last_ts     INTEGER NOT NULL,
+  PRIMARY KEY (day, ip, user_agent)
+);
 `,
 }

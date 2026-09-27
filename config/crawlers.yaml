@@ -41,26 +41,24 @@
 
 # ------------------------------------------------------------- Anthropic
 # Source: https://support.claude.com/en/articles/8896518-does-anthropic-crawl-data-from-the-web-and-how-can-site-owners-block-the-crawler
-# The article states Anthropic does not publish IP ranges (its bots use
-# service-provider public IPs) and documents no reverse-DNS scheme.
+# (checked 2026-09-27): "If a crawler has a source IP address on this list,
+# it indicates that the crawler is coming from Anthropic", linking
+# https://claude.com/crawling/bots.json (Google-style {"prefixes":[{"ipv4Prefix":...}]}).
+# One list covers all three bots. The article also states all three honour
+# robots.txt. (Earlier builds had verify: none here because the article did
+# not yet publish a list.)
 - org: Anthropic
   name: Claude-User
   ua_patterns: ['\bClaude-User\b']
-  # TODO: no official verification method found (checked the support article above, 2026-09-26)
-  verify: {method: none}
-
+  verify: {method: ip_ranges, url: "https://claude.com/crawling/bots.json"}
 - org: Anthropic
   name: Claude-SearchBot
   ua_patterns: ['\bClaude-SearchBot\b']
-  # TODO: no official verification method found (checked the support article above, 2026-09-26)
-  verify: {method: none}
-
+  verify: {method: ip_ranges, url: "https://claude.com/crawling/bots.json"}
 - org: Anthropic
   name: ClaudeBot
   ua_patterns: ['\bClaudeBot\b']
-  # TODO: no official verification method found (checked the support article above, 2026-09-26)
-  verify: {method: none}
-
+  verify: {method: ip_ranges, url: "https://claude.com/crawling/bots.json"}
 # ----------------------------------------------------------- Common Crawl
 # Source: https://commoncrawl.org/ccbot
 # Common Crawl documents dedicated ranges with reverse DNS under
