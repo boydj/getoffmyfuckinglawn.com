@@ -161,19 +161,23 @@ type rig struct {
 	pub  string
 }
 
-func newRig(t *testing.T) *rig {
+func newRig(t *testing.T, opts ...func(*Deps)) *rig {
 	t.Helper()
 	pub := t.TempDir()
 	egr := &fakeEgress{}
 	r := &rig{lim: &fakeLimiter{allow: true}, egr: egr, drip: &fakeDripper{egress: egr}, log: &fakeLogger{}, obs: &fakeObserver{}, pub: pub}
 	clock := time.UnixMilli(1_700_000_000_000)
-	r.srv = New(Deps{
+	d := Deps{
 		Pages: fakePages{}, Dripper: r.drip, Limiter: r.lim, Egress: egr, Logger: r.log, Observer: r.obs,
 		ASN:       fakeASN{"203.0.113.7": 64500},
 		Trusted:   []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
 		PublicDir: pub, Home: []byte("<html>home</html>"), BaseURL: "https://example.test",
 		Now: func() time.Time { clock = clock.Add(250 * time.Millisecond); return clock },
-	})
+	}
+	for _, o := range opts {
+		o(&d)
+	}
+	r.srv = New(d)
 	return r
 }
 
@@ -604,5 +608,45 @@ func TestAdminMazePreview(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("no renderer: %d", resp.StatusCode)
+	}
+}
+
+const testOnion = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion"
+
+func TestOnionVisitors(t *testing.T) {
+	r := newRig(t, func(d *Deps) { d.Onion = testOnion })
+	circuit := "fc00:dead:beef:4dad::12:3456"
+
+	w := r.do("GET", "/sitemap.xml", circuit, "OnionBot/1.0")
+	if !strings.Contains(w.Body.String(), "<loc>http://"+testOnion+"/lawn/") || strings.Contains(w.Body.String(), "example.test") {
+		t.Errorf("onion sitemap must link to the onion mirror:\n%s", w.Body.String())
+	}
+	if w := r.do("GET", "/", circuit, "OnionBot/1.0"); w.Header().Get("Onion-Location") != "" {
+		t.Error("onion visitors must not be told about the onion mirror")
+	}
+	r.do("GET", "/lawn/abc", circuit, "OnionBot/1.0")
+	for _, rec := range r.log.reqs {
+		if rec.IP != circuit || rec.ASN != logstore.OnionASN || rec.ASNOrg != logstore.OnionOrg || rec.Country != "" {
+			t.Errorf("onion request logged as %s AS%d %q %q", rec.IP, rec.ASN, rec.ASNOrg, rec.Country)
+		}
+	}
+	if r.lim.asns[len(r.lim.asns)-1] != logstore.OnionASN {
+		t.Errorf("limiter should see the onion pseudo-network: %v", r.lim.asns)
+	}
+
+	// Clearnet visitors: normal sitemap, and HTML pages advertise the mirror.
+	w = r.do("GET", "/sitemap.xml", "203.0.113.7", "ua")
+	if !strings.Contains(w.Body.String(), "<loc>https://example.test/lawn/") {
+		t.Errorf("clearnet sitemap:\n%s", w.Body.String())
+	}
+	if got := r.do("GET", "/?x=1", "203.0.113.7", "ua").Header().Get("Onion-Location"); got != "http://"+testOnion+"/?x=1" {
+		t.Errorf("Onion-Location on home: %q", got)
+	}
+	if got := r.do("GET", "/robots.txt", "203.0.113.7", "ua").Header().Get("Onion-Location"); got != "" {
+		t.Errorf("Onion-Location only belongs on HTML pages: %q", got)
+	}
+	// Without an onion address nothing is advertised.
+	if got := newRig(t).do("GET", "/", "203.0.113.7", "ua").Header().Get("Onion-Location"); got != "" {
+		t.Errorf("no onion configured, got %q", got)
 	}
 }

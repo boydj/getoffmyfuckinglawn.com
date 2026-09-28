@@ -257,14 +257,10 @@ func (b *Bot) finish(newCutoff int64) {
 }
 
 func asnLabel(asn int64, org string) string {
-	switch {
-	case asn == 0:
-		return "unknown ASN"
-	case org == "":
-		return fmt.Sprintf("AS%d", asn)
-	default:
-		return fmt.Sprintf("AS%d %s", asn, org)
+	if asn < 0 || asn > 1<<32-1 {
+		asn = 0
 	}
+	return logstore.NetworkLabel(uint32(asn), org, "unknown ASN")
 }
 
 // scanClients aggregates raw requests since from (unix ms) per (ip, ua),

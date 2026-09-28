@@ -125,6 +125,9 @@ func TestClassifyStatuses(t *testing.T) {
 	}{
 		{"anonymous", "192.0.2.99", "Mozilla/5.0 Firefox/130.0", logstore.StatusAnonymous, logstore.MethodNone, "", false},
 		{"anonymous empty ua", "192.0.2.99", "", logstore.StatusAnonymous, logstore.MethodNone, "", false},
+		// Over Tor a claim can be neither confirmed nor refuted.
+		{"tor rdns claim", "fc00:dead:beef:4dad::1:2", gb, logstore.StatusUnverifiable, logstore.MethodNone, "Google", false},
+		{"tor anonymous", "fc00:dead:beef:4dad::1:2", "curl/8", logstore.StatusAnonymous, logstore.MethodNone, "", false},
 		{"unverifiable", "192.0.2.99", "NoneBot/1.0", logstore.StatusUnverifiable, logstore.MethodNone, "None Co", false},
 		{"rdns verified", "192.0.2.10", gb, logstore.StatusVerified, logstore.MethodRDNS, "Google", false},
 		{"rdns verified subdomain+case", "192.0.2.11", gb, logstore.StatusVerified, logstore.MethodRDNS, "Google", false},
@@ -480,8 +483,13 @@ func TestRecordHostPTR(t *testing.T) {
 	if id, ok := st.get("198.51.100.2", "curl/8"); !ok || id.Status != logstore.StatusAnonymous {
 		t.Errorf("identity: %+v ok=%v", id, ok)
 	}
-	// Fresh rows are not looked up again; stale ones are.
+	// A Tor circuit id is never looked up.
 	before := c.Stats().PTRLookups
+	c.handle(ctx, "fc00:dead:beef:4dad::1:2", "OnionBot/1")
+	if _, ok := st.hosts["fc00:dead:beef:4dad::1:2"]; ok || c.Stats().PTRLookups != before {
+		t.Error("onion circuit must not get a PTR lookup")
+	}
+	// Fresh rows are not looked up again; stale ones are.
 	c.handle(ctx, "198.51.100.1", "OtherUA/1")
 	if c.Stats().PTRLookups != before {
 		t.Error("fresh host row was looked up again")

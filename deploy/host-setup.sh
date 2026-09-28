@@ -5,7 +5,7 @@
 # can be brought up with `make deploy` alone.
 #
 # Expects the systemd units already in /etc/systemd/system and asn-refresh.sh,
-# backup.sh, reboot-check.sh and Caddyfile in /usr/local/lib/lawn.
+# backup.sh, reboot-check.sh, Caddyfile and torrc in /usr/local/lib/lawn.
 #
 # Env:
 #   LAWN_DOMAIN  site domain; written to /etc/lawn/caddy.env when set. Required
@@ -193,6 +193,8 @@ Unattended-Upgrade::Origins-Pattern {
 	"origin=Debian,codename=${distro_codename}-updates";
 	// Caddy from its official Cloudsmith repository.
 	"site=dl.cloudsmith.io";
+	// Tor from the Tor Project's repository (onion mirror).
+	"site=deb.torproject.org";
 };
 Unattended-Upgrade::Remove-Unused-Dependencies "true";
 // Reboot at 04:30 UTC when an upgrade asks for it, even with SSH sessions
@@ -223,6 +225,81 @@ if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: 
 		ufw allow "$port" >/dev/null
 	done
 	log "ufw is active: allowed 80/tcp and 443/tcp"
+fi
+
+# ---------------------------------------------------------------------- tor
+# The onion mirror (deploy/torrc). Tor from the Tor Project's own repository,
+# as they recommend (support.torproject.org/apt/tor-deb-repo/): distribution
+# packages lag behind, and the Tor network retires old versions.
+# The key URL and fingerprint are the Tor Project's published ones; the
+# downloaded key must carry exactly that fingerprint or setup stops.
+tor_fpr=A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89
+tor_keyring=/usr/share/keyrings/deb.torproject.org-keyring.gpg
+tor_srclist=/etc/apt/sources.list.d/tor.list
+if [ ! -s "$tor_keyring" ]; then
+	log "adding Tor Project apt signing key"
+	tmpkey="$(mktemp)"
+	curl -1sLf "https://deb.torproject.org/torproject.org/$tor_fpr.asc" -o "$tmpkey"
+	fprs="$(gpg --batch --show-keys --with-colons "$tmpkey" 2>/dev/null || true)"
+	if ! grep -q "^fpr:::::::::$tor_fpr:" <<<"$fprs"; then
+		rm -f -- "$tmpkey"
+		echo "host-setup: Tor Project key does not have fingerprint $tor_fpr; refusing it" >&2
+		exit 1
+	fi
+	gpg --batch --yes --dearmor -o "$tor_keyring" "$tmpkey"
+	rm -f -- "$tmpkey"
+	chmod o+r "$tor_keyring"
+fi
+# shellcheck disable=SC1091
+codename="$(. /etc/os-release && echo "${VERSION_CODENAME:?}")"
+if printf 'deb [signed-by=%s] https://deb.torproject.org/torproject.org %s main\n' "$tor_keyring" "$codename" |
+	write_if_changed "$tor_srclist" 0644; then
+	apt-get update -q
+fi
+if ! installed tor || ! installed deb.torproject.org-keyring; then
+	log "installing tor"
+	apt-get update -q
+	# The keyring package keeps the signing key current from now on.
+	apt-get install -y -q tor deb.torproject.org-keyring
+fi
+# tor creates this itself, but create it first with tor's ownership so the
+# root-run config check below can never leave it owned by root.
+install -d -m 0700 -o debian-tor -g debian-tor /var/lib/tor/lawn
+if [ -f "$LIB/torrc" ]; then
+	if ! out="$(tor --verify-config --defaults-torrc /usr/share/tor/tor-service-defaults-torrc -f "$LIB/torrc" 2>&1)"; then
+		echo "host-setup: torrc failed validation:" >&2
+		echo "$out" >&2
+		exit 1
+	fi
+	if write_if_changed /etc/tor/torrc 0644 <"$LIB/torrc"; then
+		# Single onion mode can't be toggled by a reload.
+		systemctl restart tor@default.service
+	fi
+fi
+# tor.service is the enable-able umbrella; Debian's tor-generator hangs the
+# tor@default instance (which reads /etc/tor/torrc) off it.
+systemctl enable --quiet --now tor.service
+systemctl start tor@default.service
+
+# Hand the onion address to the app (sitemap links, Onion-Location). tor
+# writes it on first start; allow it a moment.
+hostf=/var/lib/tor/lawn/hostname
+for _ in $(seq 1 30); do
+	[ -s "$hostf" ] && break
+	sleep 1
+done
+if [ -s "$hostf" ]; then
+	onion="$(tr -d '[:space:]' <"$hostf")"
+	if ! printf '%s' "$onion" | grep -Eq '^[a-z2-7]{56}\.onion$'; then
+		echo "host-setup: $hostf does not hold a v3 onion address: $onion" >&2
+		exit 1
+	fi
+	{ grep -v '^LAWN_ONION_ADDRESS=' "$envf" || true; printf 'LAWN_ONION_ADDRESS=%s\n' "$onion"; } |
+		write_if_changed "$envf" 0640 || true
+	chown root:lawn "$envf"
+	log "onion service: http://$onion/"
+else
+	log "WARNING: tor has not written $hostf yet; the app runs without the onion address until the next deploy (check: journalctl -u tor@default -n 50)"
 fi
 
 # ------------------------------------------------------------------ systemd

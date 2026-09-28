@@ -243,3 +243,21 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
   - **Order:** newest first, or oldest first when `--ip` names a single address (that client's timeline).
   - **Filters:** user agent (case-insensitive, with `%` and `_` taken literally), path prefix, AS number, IP or CIDR (checked in Go, since SQLite cannot test prefixes), and `--lawn`.
   - **Output:** full IPs, because it is the operator's own log (section 8 governs publication). The default limit is 100.
+
+## Tor onion mirror (follow-up)
+
+- **Single onion service (operator decision).** `HiddenServiceNonAnonymousMode` plus `HiddenServiceSingleHopMode`, with `SocksPort 0` as tor(1) requires. The clearnet site already reveals the server, so 6-hop anonymity would protect nothing and cost latency and Tor network capacity. Visitors keep their anonymity.
+- **Tor from deb.torproject.org, not Debian's package.** The Tor Project recommends its repository because distribution packages lag and the network retires old versions.
+  - **Key pinning:** the key is fetched from the Tor Project's published URL and must carry fingerprint `A3C4F0F979CAA22CDBA8F512EE8CBC9E886DDD89`, or setup stops. `deb.torproject.org-keyring` keeps it current after that. Unattended upgrades cover `site=deb.torproject.org`.
+  - **How it was checked:** torproject.org was unreachable from the build sandbox. The fingerprint and URL were confirmed via search results citing support.torproject.org/apt/tor-deb-repo/, and the torrc options against tor.1.txt from a Tor release tag.
+  - **Known issue:** a signature problem with this key under apt ≥ 3 affects Debian 13, not this Debian 12 host.
+- **Circuits instead of IPs.** `HiddenServiceExportCircuitID haproxy` plus Caddy's `proxy_protocol` listener wrapper (`fallback_policy require`, 127.0.0.1:8081 only) turn each circuit into `fc00:dead:beef:4dad::<id>` in X-Forwarded-For. The app stores that as the IP. Otherwise every onion visitor would be "127.0.0.1": one client, sharing one per-IP cap and one session. This was tested with Caddy 2.10.2 and a hand-written PROXY header.
+- **Onion traffic uses a reserved pseudo-ASN, AS4294967295 (RFC 7300), named "Tor onion service".**
+  - **Why:** every existing path (per-network limits, drip budgets, wall grouping, `lawn bots`, `lawn visitors`) groups it correctly with no special cases. The number is reserved, so it can never be a real network.
+  - **Labels:** `logstore.NetworkLabel` prints just the name, and JSON publishes `asn: null` with the name.
+  - **Never published:** circuit addresses are never shown. `DisplayCIDR` returns nothing for them, and `publishable` rejects any prefix overlapping `fc00:dead:beef:4dad::/96`, whatever the status.
+- **Crawler claims over Tor are "claimed, unverifiable", never "spoofed".** With no source address, rDNS and IP ranges can neither confirm nor refute a claim, and "spoofed" would be an unfounded accusation. No reverse-DNS lookups are made for circuits.
+- **Onion address plumbing.** host-setup waits for tor's `hostname` file, checks it is a v3 address and writes `LAWN_ONION_ADDRESS` into `/etc/lawn/env`.
+  - **What the app does with it:** sends `Onion-Location` on clearnet HTML pages (home, wall), links the mirror from the home page, and serves onion visitors a sitemap with onion links. Nothing else changes, since maze links are root-relative.
+  - **Not on the maze:** `Onion-Location` stays off maze responses, to keep the hot path free of allocations.
+- **Key backup is off-box and manual (`make onion-backup`).** The nightly backup runs as `lawn` with no access to tor's directory, and an on-box copy wouldn't survive losing the box, which is the case that matters.

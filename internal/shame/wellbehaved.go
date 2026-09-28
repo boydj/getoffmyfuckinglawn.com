@@ -275,7 +275,7 @@ func (c *collector) wellBehaved(r *Report) {
 			FirstSeen:  rfc3339(m.FirstSeen),
 			LastSeen:   rfc3339(m.LastSeen),
 		}
-		if g.ASN != 0 {
+		if g.ASN != 0 && g.ASN != logstore.OnionASN { // the onion pseudo-ASN is not a real AS
 			asn := g.ASN
 			e.ASN = &asn
 		}

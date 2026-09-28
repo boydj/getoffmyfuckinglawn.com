@@ -296,6 +296,12 @@ func (c *Classifier) ClassifyDetailed(ctx context.Context, ip, ua string) (logst
 		return id, nil
 	}
 	id.ClaimedOrg = cr.Org
+	if logstore.IsOnionIP(ip) {
+		// Over Tor there is no source address to check a claim against:
+		// neither confirmed nor refuted, so never "spoofed".
+		id.Status, id.Method = logstore.StatusUnverifiable, logstore.MethodNone
+		return id, nil
+	}
 	var (
 		ok     bool
 		err    error
@@ -502,8 +508,8 @@ func (c *Classifier) recordHost(ctx context.Context, hs HostStore, ip string) {
 		return
 	}
 	a, err := netip.ParseAddr(ip)
-	if err != nil {
-		return
+	if err != nil || logstore.IsOnion(a) {
+		return // a Tor circuit id has no reverse DNS
 	}
 	c.ptrLookups.Add(1)
 	lctx, cancel := context.WithTimeout(ctx, c.dnsTimeout)

@@ -29,6 +29,7 @@ DEPLOY_HOST ?= $(call tf_out,ipv4)
 LAWN_DOMAIN ?= $(call tf_out,domain)
 SSH_KEY     ?=
 SSH_PORT    ?= 22
+SUDO        := $(if $(filter root,$(DEPLOY_USER)),,sudo -n)
 SSH_OPTS    := -p $(SSH_PORT) -o StrictHostKeyChecking=accept-new $(if $(SSH_KEY),-i $(SSH_KEY) -o IdentitiesOnly=yes,)
 
 # Local dev (`make run`): throwaway state under data/dev (gitignored).
@@ -114,6 +115,14 @@ ssh: require-host ## Shell on the host
 
 patch-status: require-host ## Host patch state: pending updates, kernel, reboot needed, failed units
 	ssh $(SSH_OPTS) $(DEPLOY_USER)@$(DEPLOY_HOST) /usr/local/lib/lawn/patch-status.sh
+
+onion-address: require-host ## Print the Tor onion mirror's address
+	ssh $(SSH_OPTS) $(DEPLOY_USER)@$(DEPLOY_HOST) $(SUDO) cat /var/lib/tor/lawn/hostname
+
+onion-backup: require-host ## Copy the onion service's keys off the host to onion-keys.tar.gz (secret; gitignored)
+	@umask 077; ssh $(SSH_OPTS) $(DEPLOY_USER)@$(DEPLOY_HOST) $(SUDO) tar -C /var/lib/tor -czf - lawn >onion-keys.tar.gz.tmp
+	@mv -f onion-keys.tar.gz.tmp onion-keys.tar.gz
+	@echo "wrote onion-keys.tar.gz: the onion address's private key. Keep it somewhere safe and never commit it."
 
 ## ---------------------------------------------------------------- Dev
 

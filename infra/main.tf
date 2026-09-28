@@ -47,6 +47,7 @@ locals {
       { src = "backup.sh", dest = "/usr/local/lib/lawn/backup.sh", mode = "0755" },
       { src = "reboot-check.sh", dest = "/usr/local/lib/lawn/reboot-check.sh", mode = "0755" },
       { src = "Caddyfile", dest = "/usr/local/lib/lawn/Caddyfile", mode = "0644" },
+      { src = "torrc", dest = "/usr/local/lib/lawn/torrc", mode = "0644" },
       ] : {
       path    = f.dest
       mode    = f.mode

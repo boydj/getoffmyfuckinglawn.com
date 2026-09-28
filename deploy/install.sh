@@ -23,7 +23,7 @@ LIB=/usr/local/lib/lawn
 BIN=/usr/local/bin/lawn
 log() { echo "install: $*"; }
 
-for f in bin/lawn config/crawlers.yaml config/config.example.yaml deploy/host-setup.sh deploy/Caddyfile; do
+for f in bin/lawn config/crawlers.yaml config/config.example.yaml deploy/host-setup.sh deploy/Caddyfile deploy/torrc; do
 	[ -e "$src/$f" ] || { echo "install: bundle is missing $f" >&2; exit 1; }
 done
 
@@ -43,6 +43,7 @@ for s in host-setup.sh asn-refresh.sh backup.sh reboot-check.sh patch-status.sh;
 	install -m 0755 -o root -g root "$src/deploy/$s" "$LIB/$s"
 done
 install -m 0644 -o root -g root "$src/deploy/Caddyfile" "$LIB/Caddyfile"
+install -m 0644 -o root -g root "$src/deploy/torrc" "$LIB/torrc"
 
 # Packages, user, dirs, secret, Caddy, sysctl, journald, timers.
 "$LIB/host-setup.sh"

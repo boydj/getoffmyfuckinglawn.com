@@ -136,6 +136,7 @@ func New(cfg config.Config, opt Options) (*App, error) {
 		RobotsTxt: server.RobotsTxt,
 		Bait:      gen.EntryURLs(6),
 		BaseURL:   cfg.BaseURL,
+		Onion:     cfg.OnionAddress,
 	})
 	if err != nil {
 		st.Close()
@@ -155,6 +156,7 @@ func New(cfg config.Config, opt Options) (*App, error) {
 		PublicDir: cfg.PublicDir,
 		Home:      home,
 		BaseURL:   cfg.BaseURL,
+		Onion:     cfg.OnionAddress,
 		Now:       opt.Now,
 	})
 	if err := a.loadASN(); err != nil {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -76,6 +77,7 @@ type Config struct {
 	Listen          string    `yaml:"listen"`
 	AdminListen     string    `yaml:"admin_listen"`
 	BaseURL         string    `yaml:"base_url"`
+	OnionAddress    string    `yaml:"onion_address"`
 	TrustedProxies  []string  `yaml:"trusted_proxies"`
 	ExcludeCIDRs    []string  `yaml:"exclude_cidrs"`
 	ServerSecretEnv string    `yaml:"server_secret_env"`
@@ -142,6 +144,7 @@ var envOverrides = []struct {
 	{"LAWN_LISTEN", func(c *Config) *string { return &c.Listen }},
 	{"LAWN_ADMIN_LISTEN", func(c *Config) *string { return &c.AdminListen }},
 	{"LAWN_BASE_URL", func(c *Config) *string { return &c.BaseURL }},
+	{"LAWN_ONION_ADDRESS", func(c *Config) *string { return &c.OnionAddress }},
 	{"LAWN_DB_PATH", func(c *Config) *string { return &c.DBPath }},
 	{"LAWN_ASN_DB_PATH", func(c *Config) *string { return &c.ASNDBPath }},
 	{"LAWN_PUBLIC_DIR", func(c *Config) *string { return &c.PublicDir }},
@@ -186,6 +189,10 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	return c, c.Validate()
 }
 
+// onionRE matches a v3 onion service hostname, as tor writes it to the
+// service directory's hostname file.
+var onionRE = regexp.MustCompile(`^[a-z2-7]{56}\.onion$`)
+
 // parsePrefixes parses CIDRs or bare addresses (as /32 or /128).
 func parsePrefixes(key string, in []string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
@@ -217,6 +224,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Exclude, err = parsePrefixes("exclude_cidrs", c.ExcludeCIDRs); err != nil {
 		return err
+	}
+	if c.OnionAddress != "" && !onionRE.MatchString(c.OnionAddress) {
+		return fmt.Errorf("config: onion_address %q is not a v3 onion hostname (56 base32 characters + .onion)", c.OnionAddress)
 	}
 	for _, p := range c.Exclude {
 		if p.Bits() == 0 {

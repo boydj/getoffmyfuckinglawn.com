@@ -196,13 +196,10 @@ func Write(w io.Writer, r *Result) {
 }
 
 func network(asn int64, org string) string {
-	switch {
-	case asn == 0:
-		return "-"
-	case org == "":
-		return "AS" + strconv.FormatInt(asn, 10)
+	if asn < 0 || asn > 1<<32-1 {
+		asn = 0
 	}
-	return "AS" + strconv.FormatInt(asn, 10) + " " + org
+	return logstore.NetworkLabel(uint32(asn), org, "-")
 }
 
 func status(s int64) string {

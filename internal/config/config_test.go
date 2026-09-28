@@ -72,6 +72,10 @@ limits: { max_conns_global: 10, max_conns_per_asn: 5, max_conns_per_ip: 2, daily
 	if err := c.RequireSecret(); err != nil {
 		t.Fatal(err)
 	}
+	good := "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion"
+	if c, err := Load(p, env(map[string]string{"LAWN_ONION_ADDRESS": good})); err != nil || c.OnionAddress != good {
+		t.Fatalf("onion address from env: %q %v", c.OnionAddress, err)
+	}
 	// The env var replaces the file's list.
 	c, err = Load(p, env(map[string]string{"LAWN_EXCLUDE_CIDRS": "203.0.113.0/24, 192.0.2.9"}))
 	if err != nil || len(c.Exclude) != 2 || c.Exclude[0].String() != "203.0.113.0/24" || c.Exclude[1].String() != "192.0.2.9/32" {
@@ -100,7 +104,8 @@ func TestInvalid(t *testing.T) {
 	if _, err := Load(p, env(nil)); err == nil {
 		t.Fatal("expected error for negative prefix_rate")
 	}
-	for _, bad := range []string{`exclude_cidrs: ["0.0.0.0/0"]`, `exclude_cidrs: ["nope"]`} {
+	for _, bad := range []string{`exclude_cidrs: ["0.0.0.0/0"]`, `exclude_cidrs: ["nope"]`,
+		`onion_address: "example.onion"`, `onion_address: "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567abcdefghijklmnopqrstuvwx.onion"`} {
 		if err := os.WriteFile(p, []byte(bad+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}

@@ -127,7 +127,7 @@ Everything goes through `make`. The target is one dedicated Vultr instance that 
 - **cloud-init** (first boot):
   - writes the `deploy/` units, scripts and Caddyfile;
   - puts the secret in `/etc/lawn/env`;
-  - runs `deploy/host-setup.sh`, which installs Caddy (official apt repo), sqlite3, unattended-upgrades and needrestart, creates the `lawn` user and directories, caps journald, tunes socket sysctls, enables the timers, and downloads the iptoasn.com ASN dataset.
+  - runs `deploy/host-setup.sh`, which installs Caddy (official apt repo), Tor (the Tor Project's apt repo, signing key pinned by fingerprint), sqlite3, unattended-upgrades and needrestart, creates the `lawn` user and directories, caps journald, tunes socket sysctls, enables the timers, and downloads the iptoasn.com ASN dataset.
 - **`make deploy`**
   - cross-compiles a static linux/amd64 binary and ships it, the templates, the corpus, `crawlers.yaml` and the `deploy/` files over one SSH connection;
   - re-runs the idempotent host setup, preflights the new binary, swaps it in atomically and restarts;
@@ -272,6 +272,24 @@ lawn bots --since all              # everything, including rolled-up history
 ```
 
 **Retention.** Raw request rows older than `retention.raw_requests_days` (90) are rolled into `daily_aggregates` (violators) and `daily_visits` (every visitor) by the running server.
+
+### Tor onion mirror
+
+The whole site is also served as a Tor onion service, set up by `make deploy` with no extra steps. Tor only makes outbound connections, so no firewall change is needed.
+
+- **How it works:** tor (`deploy/torrc`) runs a *single* onion service. The server's location isn't secret, so circuits are 3 hops instead of 6, while visitors stay anonymous. tor hands each connection to Caddy on `127.0.0.1:8081` with a PROXY header naming the client's circuit (`fc00:dead:beef:4dad::<id>`). Caddy proxies to the app like any other request.
+- **In the logs:** onion visitors have no IP address. The circuit address is stored in its place, so sessions and per-client limits work per circuit. The network is "Tor onion service" (the reserved AS4294967295), with no country and no reverse DNS. Crawler claims over Tor can't be verified, so they're labelled "claimed, unverifiable". `lawn visitors --asn 4294967295` lists onion traffic.
+- **Limits:** all onion traffic shares the per-network caps: 200 connections for the pseudo-ASN, and 50 connections at 10 new maze requests per second for its /48. tor itself allows at most 32 streams per circuit.
+- **On the wall:** onion violators and well-behaved onion crawlers appear as one network, "Tor onion service". No circuit ID is ever published, and none goes into the blocklist.
+- **Advertising the mirror:** the clearnet home page and wall pages send `Onion-Location`, so Tor Browser offers the mirror. The home page links it. Onion visitors get a sitemap that points at the onion mirror.
+
+```sh
+make onion-address      # the mirror's hostname
+make onion-backup       # copy its private key off the box to onion-keys.tar.gz (gitignored; keep it safe)
+```
+
+- **The key is the address.** It lives only in `/var/lib/tor/lawn/`, and a rebuilt server gets a new address unless you restore it. To restore on a new box, before the first deploy: `tar -C /var/lib/tor -xzf onion-keys.tar.gz`, then `chown -R debian-tor:debian-tor /var/lib/tor/lawn && chmod 700 /var/lib/tor/lawn`. Per tor(1), that directory must never be reused for a normal (anonymous) onion service.
+- **To turn the mirror off:** `systemctl disable --now tor@default`, then remove `LAWN_ONION_ADDRESS` from `/etc/lawn/env` and `systemctl restart lawn`. The next deploy turns it back on.
 
 ### Backups and restore
 

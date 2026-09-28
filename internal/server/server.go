@@ -97,7 +97,11 @@ type Deps struct {
 	PublicDir string
 	Home      []byte // pre-rendered homepage
 	BaseURL   string
-	Now       func() time.Time
+	// Onion is the Tor onion mirror's hostname ("" = none). Onion visitors
+	// get onion-local sitemap links; clearnet pages advertise it with an
+	// Onion-Location header.
+	Onion string
+	Now   func() time.Time
 }
 
 type asnBox struct {
@@ -110,8 +114,12 @@ type Server struct {
 	d       Deps
 	asn     atomic.Pointer[asnBox]
 	sitemap []byte
-	shame   http.Handler
-	Metrics *Metrics
+	// Onion mirror: the sitemap with onion links, and the Onion-Location
+	// prefix ("http://xxx.onion"). Both empty without an onion address.
+	onionSitemap []byte
+	onionLoc     string
+	shame        http.Handler
+	Metrics      *Metrics
 }
 
 // New builds a Server.
@@ -122,6 +130,10 @@ func New(d Deps) *Server {
 	s := &Server{d: d, Metrics: &Metrics{}}
 	s.SetASN(d.ASN)
 	s.sitemap = buildSitemap(d.BaseURL, d.Pages.EntryURLs(8))
+	if d.Onion != "" {
+		s.onionLoc = "http://" + d.Onion
+		s.onionSitemap = buildSitemap(s.onionLoc, d.Pages.EntryURLs(8))
+	}
 	s.shame = http.FileServer(shameFS{dir: d.PublicDir})
 	return s
 }
@@ -135,6 +147,9 @@ func (s *Server) SetASN(l ASNLookup) {
 
 func (s *Server) lookupASN(a netip.Addr) (uint32, string, string) {
 	b := s.asn.Load()
+	if logstore.IsOnion(a) {
+		return logstore.OnionASN, logstore.OnionOrg, ""
+	}
 	if b == nil || b.l == nil || !a.IsValid() {
 		return 0, "", ""
 	}
@@ -195,6 +210,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
+	onion := asn == logstore.OnionASN
 
 	switch {
 	case r.Method != http.MethodGet && r.Method != http.MethodHead:
@@ -217,10 +233,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.logRobots(logstore.RobotsFetch{IP: rec.IP, UserAgent: ua, Ts: rec.TsStart})
 	case path == "/":
 		route = routeHome
+		s.advertiseOnion(h, r, onion)
 		sent = s.writeSmall(w, status, "text/html; charset=utf-8", s.d.Home, r)
 	case path == "/sitemap.xml":
 		route = routeSitemap
-		sent = s.writeSmall(w, status, "application/xml; charset=utf-8", s.sitemap, r)
+		sm := s.sitemap
+		if onion && s.onionSitemap != nil {
+			sm = s.onionSitemap
+		}
+		sent = s.writeSmall(w, status, "application/xml; charset=utf-8", sm, r)
 	case path == "/healthz":
 		route = routeHealth
 		sent = s.writeSmall(w, status, "text/plain; charset=utf-8", []byte("ok\n"), r)
@@ -232,6 +253,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		route = routeShame
 		cw := &countingWriter{ResponseWriter: w, status: http.StatusOK}
 		h.Set("Cache-Control", "public, max-age=60")
+		s.advertiseOnion(h, r, onion)
 		s.shame.ServeHTTP(cw, r)
 		status, sent = cw.status, cw.n
 	default:
@@ -253,6 +275,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.Metrics.observe(route, rec.IsViolation, rec.Dripped, sent)
 	if !s.d.Logger.LogRequest(rec) {
 		s.Metrics.LogDropped.Add(1)
+	}
+}
+
+// advertiseOnion sets Onion-Location on clearnet HTML pages, so Tor Browser
+// offers the onion mirror of the same page.
+func (s *Server) advertiseOnion(h http.Header, r *http.Request, onion bool) {
+	if s.onionLoc != "" && !onion {
+		h.Set("Onion-Location", s.onionLoc+r.URL.RequestURI())
 	}
 }
 
