@@ -143,6 +143,14 @@ func (f fakeASN) Lookup(a netip.Addr) (uint32, string, bool) {
 	return n, "TEST-AS" + strconv.Itoa(int(n)), true
 }
 
+func (f fakeASN) LookupCC(a netip.Addr) (uint32, string, string, bool) {
+	n, org, ok := f.Lookup(a)
+	if !ok {
+		return 0, "", "", false
+	}
+	return n, org, "NL", true
+}
+
 type rig struct {
 	srv  *Server
 	lim  *fakeLimiter
@@ -212,7 +220,7 @@ func TestRoutes(t *testing.T) {
 		t.Fatalf("every request must be logged: got %d want %d", len(r.log.reqs), len(cases))
 	}
 	for _, rec := range r.log.reqs {
-		if rec.IP != "203.0.113.7" || rec.UserAgent != "TestBot/1.0" || rec.ASN != 64500 || rec.ASNOrg != "TEST-AS64500" {
+		if rec.IP != "203.0.113.7" || rec.UserAgent != "TestBot/1.0" || rec.ASN != 64500 || rec.ASNOrg != "TEST-AS64500" || rec.Country != "NL" {
 			t.Errorf("bad attribution: %+v", rec)
 		}
 		if rec.TsEnd < rec.TsStart {
@@ -328,7 +336,7 @@ func TestMetricsExposition(t *testing.T) {
 	r.do("GET", "/lawn/a", "", "ua")
 	reg := NewMetricsRegistry(r.srv)
 	reg.Register(Gauge{Name: "lawn_test_extra", Help: "x", Value: func() float64 { return 42 }})
-	ts := httptest.NewServer(NewAdminServer("", reg).Handler)
+	ts := httptest.NewServer(NewAdminServer("", reg, nil).Handler)
 	defer ts.Close()
 	resp, err := http.Get(ts.URL + "/metrics")
 	if err != nil {
@@ -547,10 +555,54 @@ func TestMazeLogsParentID(t *testing.T) {
 	if len(r.log.reqs) != 2 {
 		t.Fatalf("logged %d", len(r.log.reqs))
 	}
+	if w := r.do("GET", "/lawn/x", "203.0.113.7", "ua"); w.Header().Get("X-Robots-Tag") != "noindex" {
+		t.Errorf("X-Robots-Tag %q: maze links must stay followable", w.Header().Get("X-Robots-Tag"))
+	}
 	if e := r.log.reqs[0]; e.PageID == 0 || e.ParentID != 0 {
 		t.Errorf("entry: %+v", e)
 	}
 	if c := r.log.reqs[1]; c.PageID != uint32(len("/lawn/next")) || c.ParentID != 1 {
 		t.Errorf("child: page=%d parent=%d", c.PageID, c.ParentID)
+	}
+}
+
+func TestAdminMazePreview(t *testing.T) {
+	r := newRig(t)
+	ts := httptest.NewServer(NewAdminServer("", NewMetricsRegistry(r.srv), fakePages{}).Handler)
+	defer ts.Close()
+	get := func(path string) (int, string) {
+		t.Helper()
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	if code, body := get("/lawn/abc"); code != 200 || !strings.Contains(body, "<title>/lawn/abc</title>") {
+		t.Fatalf("preview: %d %q", code, body)
+	}
+	if code, _ := get("/lawn"); code != 200 {
+		t.Fatalf("/lawn: %d", code)
+	}
+	if code, body := get("/"); code != 200 || !strings.Contains(body, `href="/lawn/entry0"`) || !strings.Contains(body, "never logged") {
+		t.Fatalf("index: %d %q", code, body)
+	}
+	// Nothing was logged, dripped or classified.
+	if len(r.log.reqs) != 0 || r.drip.drips != 0 || r.drip.fasts != 0 || len(r.obs.pairs) != 0 {
+		t.Errorf("preview must not log or drip: reqs=%d drips=%d fasts=%d obs=%d",
+			len(r.log.reqs), r.drip.drips, r.drip.fasts, len(r.obs.pairs))
+	}
+	// Without a renderer there is no preview.
+	plain := httptest.NewServer(NewAdminServer("", NewMetricsRegistry(r.srv), nil).Handler)
+	defer plain.Close()
+	resp, err := http.Get(plain.URL + "/lawn/abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("no renderer: %d", resp.StatusCode)
 	}
 }

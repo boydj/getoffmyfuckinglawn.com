@@ -14,6 +14,11 @@ admin_listen: "127.0.0.1:9090"
 base_url: "https://getoffmyfuckinglawn.com"
 # Peers whose X-Forwarded-For is trusted: Caddy on the same host only.
 trusted_proxies: ["127.0.0.1/32", "::1/128"]
+# Your own networks (CIDRs or single addresses). Visits from them are still
+# logged, but left out of the wall, the well-behaved page, `lawn bots` and
+# `lawn stats`, and hidden by `lawn visitors` unless you pass --operators.
+# Applies to history too. Reload with: systemctl reload lawn
+exclude_cidrs: []
 # Name of the env var holding the HMAC secret that seeds the maze.
 server_secret_env: "LAWN_SECRET"
 

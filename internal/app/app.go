@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,7 @@ import (
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/maze"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/server"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/shame"
+	"github.com/boydj/getoffmyfuckinglawn.com/internal/visitors"
 	"github.com/boydj/getoffmyfuckinglawn.com/web"
 )
 
@@ -52,6 +54,8 @@ type App struct {
 	patience   *drip.Patience
 	rate       *drip.RateLimiter
 	crawlers   atomic.Pointer[[]attrib.Crawler] // for the shame builder's exemptions
+	exclude    atomic.Pointer[[]netip.Prefix]   // operator networks (exclude_cidrs)
+	pages      server.PageRenderer              // maze generator, for the admin preview
 }
 
 func (o *Options) defaults() {
@@ -93,7 +97,7 @@ func New(cfg config.Config, opt Options) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{Cfg: cfg, Store: st, opt: opt}
+	a := &App{Cfg: cfg, Store: st, opt: opt, pages: gen}
 	a.Writer = logstore.NewWriter(st, cfg.Log.BufferSize, cfg.Log.BatchSize, cfg.Log.FlushInterval)
 
 	crawlers, err := attrib.LoadCrawlers(cfg.CrawlersFile)
@@ -102,6 +106,7 @@ func New(cfg config.Config, opt Options) (*App, error) {
 		return nil, err
 	}
 	a.crawlers.Store(&crawlers)
+	a.SetExclude(cfg.Exclude)
 	a.Ranges = newRangeStore(cfg, crawlers, opt)
 	a.Classifier = newClassifier(cfg, crawlers, a.Ranges, st, opt)
 
@@ -212,6 +217,10 @@ func (a *App) Reload() error {
 	return errors.Join(errs...)
 }
 
+// SetExclude swaps the operator networks kept out of the reports (config
+// exclude_cidrs, re-read on SIGHUP). It takes effect at the next build.
+func (a *App) SetExclude(nets []netip.Prefix) { a.exclude.Store(&nets) }
+
 // Handler is the public handler (for tests).
 func (a *App) Handler() http.Handler { return a.Server }
 
@@ -228,6 +237,7 @@ func ShameOptions(cfg config.Config, st *logstore.Store, now func() time.Time, c
 		SessionGap:   cfg.Session.Gap,
 		BlocklistMin: cfg.Shame.BlocklistMinViolations,
 		Now:          now,
+		Exclude:      cfg.Exclude,
 	}
 }
 
@@ -235,7 +245,9 @@ func ShameOptions(cfg config.Config, st *logstore.Store, now func() time.Time, c
 func (a *App) BuildShame(ctx context.Context) (*shame.Report, error) {
 	a.buildMu.Lock()
 	defer a.buildMu.Unlock()
-	r, err := shame.Build(ctx, ShameOptions(a.Cfg, a.Store, a.opt.Now, *a.crawlers.Load()))
+	opt := ShameOptions(a.Cfg, a.Store, a.opt.Now, *a.crawlers.Load())
+	opt.Exclude = *a.exclude.Load()
+	r, err := shame.Build(ctx, opt)
 	if err == nil {
 		a.lastBuild.Store(a.opt.Now().Unix())
 	}
@@ -247,7 +259,7 @@ func (a *App) BuildShame(ctx context.Context) (*shame.Report, error) {
 // log writer drains, and the database is closed.
 func (a *App) Run(ctx context.Context) error {
 	pub := server.NewPublicServer(a.Cfg.Listen, a.Server, a.Cfg.Drip.MaxDuration)
-	adm := server.NewAdminServer(a.Cfg.AdminListen, a.Metrics)
+	adm := server.NewAdminServer(a.Cfg.AdminListen, a.Metrics, a.pages)
 	pubLn, err := net.Listen("tcp", a.Cfg.Listen)
 	if err != nil {
 		return err
@@ -481,11 +493,32 @@ func Bots(ctx context.Context, cfg config.Config, o BotsOptions, out io.Writer) 
 		return err
 	}
 	defer st.Close()
-	r, err := bots.Collect(ctx, bots.Options{DB: st.DB(), Crawlers: crawlers, Since: since, All: o.All})
+	r, err := bots.Collect(ctx, bots.Options{DB: st.DB(), Crawlers: crawlers, Since: since, All: o.All, Exclude: cfg.Exclude})
 	if err != nil {
 		return err
 	}
 	bots.Write(out, r, bots.WriteOptions{UnknownOnly: o.UnknownOnly, NewOnly: o.NewOnly, Limit: o.Limit, Details: o.Details})
+	return nil
+}
+
+// Visitors is `lawn visitors`: the private per-request log. Since uses the
+// same syntax as `lawn bots` ("24h", "7d", "all").
+func Visitors(ctx context.Context, cfg config.Config, since string, o visitors.Options, out io.Writer) error {
+	d, err := bots.ParseSince(since)
+	if err != nil {
+		return err
+	}
+	st, err := logstore.Open(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	o.DB, o.Since, o.Exclude = st.DB(), d, cfg.Exclude
+	r, err := visitors.List(ctx, o)
+	if err != nil {
+		return err
+	}
+	visitors.Write(out, r)
 	return nil
 }
 

@@ -33,6 +33,7 @@ func TestLoadFileAndEnv(t *testing.T) {
 	yaml := `
 listen: "0.0.0.0:1234"
 trusted_proxies: ["10.0.0.1", "::1/128"]
+exclude_cidrs: ["198.51.100.7", "2001:db8:5::/48"]
 drip: { chunk_bytes: 32, interval: 250ms, max_duration: 2m }
 limits: { max_conns_global: 10, max_conns_per_asn: 5, max_conns_per_ip: 2, daily_egress_bytes: 1000 } # removed key: must be ignored
 `
@@ -65,8 +66,16 @@ limits: { max_conns_global: 10, max_conns_per_asn: 5, max_conns_per_ip: 2, daily
 	if len(c.Proxies) != 2 || c.Proxies[0].String() != "10.0.0.1/32" || c.Proxies[1].String() != "::1/128" {
 		t.Fatalf("proxies: %v", c.Proxies)
 	}
+	if len(c.Exclude) != 2 || c.Exclude[0].String() != "198.51.100.7/32" || c.Exclude[1].String() != "2001:db8:5::/48" {
+		t.Fatalf("exclude: %v", c.Exclude)
+	}
 	if err := c.RequireSecret(); err != nil {
 		t.Fatal(err)
+	}
+	// The env var replaces the file's list.
+	c, err = Load(p, env(map[string]string{"LAWN_EXCLUDE_CIDRS": "203.0.113.0/24, 192.0.2.9"}))
+	if err != nil || len(c.Exclude) != 2 || c.Exclude[0].String() != "203.0.113.0/24" || c.Exclude[1].String() != "192.0.2.9/32" {
+		t.Fatalf("exclude from env: %v %v", c.Exclude, err)
 	}
 }
 
@@ -90,6 +99,14 @@ func TestInvalid(t *testing.T) {
 	}
 	if _, err := Load(p, env(nil)); err == nil {
 		t.Fatal("expected error for negative prefix_rate")
+	}
+	for _, bad := range []string{`exclude_cidrs: ["0.0.0.0/0"]`, `exclude_cidrs: ["nope"]`} {
+		if err := os.WriteFile(p, []byte(bad+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(p, env(nil)); err == nil {
+			t.Fatalf("expected error for %s", bad)
+		}
 	}
 	if err := os.WriteFile(p, []byte("drip: { chunk_bytes: 0 }\n"), 0o600); err != nil {
 		t.Fatal(err)

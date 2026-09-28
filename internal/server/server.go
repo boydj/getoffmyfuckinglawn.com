@@ -65,6 +65,12 @@ type ASNLookup interface {
 	Lookup(a netip.Addr) (asn uint32, org string, ok bool)
 }
 
+// countryLookup is implemented by lookups that also know the country of
+// an address (attrib.ASNTable). Optional: without it, country is NULL.
+type countryLookup interface {
+	LookupCC(a netip.Addr) (asn uint32, org, cc string, ok bool)
+}
+
 // Logger is the non-blocking request log sink.
 type Logger interface {
 	LogRequest(r logstore.Request) bool
@@ -94,7 +100,10 @@ type Deps struct {
 	Now       func() time.Time
 }
 
-type asnBox struct{ l ASNLookup }
+type asnBox struct {
+	l  ASNLookup
+	cc countryLookup // l, when it also knows countries; else nil
+}
 
 // Server is the public HTTP handler.
 type Server struct {
@@ -118,18 +127,29 @@ func New(d Deps) *Server {
 }
 
 // SetASN atomically swaps the ASN table (SIGHUP reload).
-func (s *Server) SetASN(l ASNLookup) { s.asn.Store(&asnBox{l}) }
+func (s *Server) SetASN(l ASNLookup) {
+	b := &asnBox{l: l}
+	b.cc, _ = l.(countryLookup)
+	s.asn.Store(b)
+}
 
-func (s *Server) lookupASN(a netip.Addr) (uint32, string) {
+func (s *Server) lookupASN(a netip.Addr) (uint32, string, string) {
 	b := s.asn.Load()
 	if b == nil || b.l == nil || !a.IsValid() {
-		return 0, ""
+		return 0, "", ""
+	}
+	if b.cc != nil {
+		asn, org, cc, ok := b.cc.LookupCC(a)
+		if !ok {
+			return 0, "", ""
+		}
+		return asn, org, cc
 	}
 	asn, org, ok := b.l.Lookup(a)
 	if !ok {
-		return 0, ""
+		return 0, "", ""
 	}
-	return asn, org
+	return asn, org, ""
 }
 
 // shedPage is served for /lawn/* when a connection cap is hit.
@@ -140,7 +160,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := s.d.Now()
 	viaProxy := inPrefixes(parseHostAddr(r.RemoteAddr), s.d.Trusted)
 	ip := ClientIP(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), s.d.Trusted)
-	asn, asnOrg := s.lookupASN(ip)
+	asn, asnOrg, country := s.lookupASN(ip)
 	ua := r.UserAgent()
 	path := r.URL.Path
 
@@ -149,6 +169,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		IP:        ip.String(),
 		ASN:       asn,
 		ASNOrg:    asnOrg,
+		Country:   country,
 		UserAgent: ua,
 		Method:    r.Method,
 		Path:      logPath(r.URL),
@@ -256,7 +277,7 @@ const (
 func (s *Server) serveMaze(w http.ResponseWriter, r *http.Request, ip netip.Addr, asn uint32, ua string, start time.Time) (int64, bool, string) {
 	h := w.Header()
 	h.Set("Cache-Control", "no-store")
-	h.Set("X-Robots-Tag", "noindex, nofollow")
+	h.Set("X-Robots-Tag", "noindex")
 	h.Set("Content-Type", "text/html; charset=utf-8")
 
 	if r.Method == http.MethodHead {

@@ -32,12 +32,14 @@ type asnRange4 struct {
 	start, end uint32
 	asn        uint32
 	org        uint32 // index into ASNTable.orgs
+	cc         uint16 // index into ASNTable.ccs
 }
 
 type asnRange6 struct {
 	start, end u128
 	asn        uint32
 	org        uint32
+	cc         uint16
 }
 
 // ASNTable is an immutable in-memory IP range → ASN table.
@@ -45,6 +47,7 @@ type ASNTable struct {
 	v4   []asnRange4
 	v6   []asnRange6
 	orgs []string
+	ccs  []string // country codes as in the file ("" for "None"/"Unknown")
 }
 
 // LoadASN reads an iptoasn.com ip2asn-combined.tsv.gz file.
@@ -68,6 +71,8 @@ func ParseASN(r io.Reader) (*ASNTable, error) {
 	defer zr.Close()
 	t := &ASNTable{}
 	orgIdx := make(map[string]uint32, 1<<16)
+	ccIdx := map[string]uint16{"": 0}
+	t.ccs = []string{""}
 	sc := bufio.NewScanner(zr)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	var fields [5][]byte
@@ -108,11 +113,21 @@ func ParseASN(r io.Reader) (*ASNTable, error) {
 			t.orgs = append(t.orgs, s)
 			orgIdx[s] = org
 		}
+		cc, ok := ccIdx[string(fields[3])]
+		if !ok {
+			// Two-letter codes only; "None" and "Unknown" map to "".
+			code := string(fields[3])
+			if len(code) == 2 && len(t.ccs) < 1<<16 {
+				cc = uint16(len(t.ccs))
+				t.ccs = append(t.ccs, code)
+			}
+			ccIdx[code] = cc
+		}
 		if start.Is4() {
 			s4, e4 := start.As4(), end.As4()
-			t.v4 = append(t.v4, asnRange4{binary.BigEndian.Uint32(s4[:]), binary.BigEndian.Uint32(e4[:]), uint32(asn64), org})
+			t.v4 = append(t.v4, asnRange4{binary.BigEndian.Uint32(s4[:]), binary.BigEndian.Uint32(e4[:]), uint32(asn64), org, cc})
 		} else {
-			t.v6 = append(t.v6, asnRange6{addrU128(start), addrU128(end), uint32(asn64), org})
+			t.v6 = append(t.v6, asnRange6{addrU128(start), addrU128(end), uint32(asn64), org, cc})
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -156,8 +171,15 @@ func (t *ASNTable) Len() int {
 // Lookup returns the ASN and org for a. It does not allocate. A nil table
 // or an address in no routed range returns ok=false.
 func (t *ASNTable) Lookup(a netip.Addr) (asn uint32, org string, ok bool) {
+	asn, org, _, ok = t.LookupCC(a)
+	return asn, org, ok
+}
+
+// LookupCC is Lookup plus the range's two-letter country code as listed by
+// iptoasn.com ("" when unknown). It does not allocate.
+func (t *ASNTable) LookupCC(a netip.Addr) (asn uint32, org, cc string, ok bool) {
 	if t == nil || !a.IsValid() {
-		return 0, "", false
+		return 0, "", "", false
 	}
 	a = a.Unmap()
 	if a.Is4() {
@@ -174,13 +196,13 @@ func (t *ASNTable) Lookup(a netip.Addr) (asn uint32, org string, ok bool) {
 			}
 		}
 		if lo == 0 {
-			return 0, "", false
+			return 0, "", "", false
 		}
 		r := &t.v4[lo-1]
 		if x > r.end {
-			return 0, "", false
+			return 0, "", "", false
 		}
-		return r.asn, t.orgs[r.org], true
+		return r.asn, t.orgs[r.org], t.ccs[r.cc], true
 	}
 	x := addrU128(a)
 	lo, hi := 0, len(t.v6)
@@ -193,11 +215,11 @@ func (t *ASNTable) Lookup(a netip.Addr) (asn uint32, org string, ok bool) {
 		}
 	}
 	if lo == 0 {
-		return 0, "", false
+		return 0, "", "", false
 	}
 	r := &t.v6[lo-1]
 	if r.end.less(x) {
-		return 0, "", false
+		return 0, "", "", false
 	}
-	return r.asn, t.orgs[r.org], true
+	return r.asn, t.orgs[r.org], t.ccs[r.cc], true
 }

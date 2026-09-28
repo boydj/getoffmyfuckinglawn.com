@@ -201,8 +201,12 @@ func checkPages(t *testing.T, g *Generator, paths []string) {
 		if n := strings.Count(page, "<p>"); n < minParagraphs || n > maxParagraphs {
 			t.Fatalf("path %q: %d paragraphs", p, n)
 		}
-		if !strings.Contains(page, `<meta name="robots" content="noindex,nofollow">`) {
+		if !strings.Contains(page, `<meta name="robots" content="noindex">`) {
 			t.Fatalf("path %q: missing robots meta", p)
+		}
+		// Links must stay followable: robots.txt is the only "keep out".
+		if strings.Contains(page, "nofollow") {
+			t.Fatalf("path %q: maze pages must not say nofollow", p)
 		}
 		lower := strings.ToLower(page)
 		for _, bad := range []string{"<script", "<img", "src=", "http://", "https://", "<link", "@import", "url("} {

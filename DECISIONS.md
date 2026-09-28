@@ -221,3 +221,25 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
   - **Measured:** `lawn bots` matches each child to an earlier fetch of its parent by the same user agent, across IPs because distributed crawlers split work between addresses. It counts how many of those started before the parent response ended (`OPEN`). Parents that retention has rolled up leave children unmatched, so run it on recent windows.
   - **Compatibility:** child URLs grow by about 7 characters. Old child URLs (MAC only) and entry URLs still decode and render the same page, with no parent.
   - **Why ids and not full paths:** a 4-byte id keeps URLs short and rows small, and the HMAC means clients cannot forge a matching id.
+
+## Depth, operator traffic and visitor detail (follow-up)
+
+- **Maze pages no longer say `nofollow`.** They carry `<meta name="robots" content="noindex">` and `X-Robots-Tag: noindex`. This supersedes the build-time choice above ("noindex,nofollow").
+  - **Why:** robots.txt is the rule the maze enforces. A crawler that ignores it but honours page-level nofollow stopped at depth 0, which defeats the tarpit without making anything fairer. Only clients already in a disallowed path ever see these pages.
+  - **Kept:** `noindex`, so no search engine lists maze pages. The homepage bait links keep `rel="nofollow"` (SPEC.md section 3).
+  - **What the data showed first:** in the first week every maze visitor was a one-hop link checker. These fetch `/`, then each of the six hidden links once, with no Referer, and never parse the pages. nofollow was not the cause for them, but it is the one thing on our side that would stop a real crawler.
+- **Operator networks (`exclude_cidrs`) are filtered when reports are read, not tagged when requests are written.**
+  - **Applies to history:** adding a network also hides its past rows, including rollups (`daily_visits`, `daily_aggregates`), with no migration or backfill. Removing it brings them back.
+  - **"Still logged":** the rows stay in the database; `lawn visitors --operators` shows them marked.
+  - **Scope:** the shame collector (wall, well-behaved page, feed, blocklist, `lawn stats`), `lawn bots` and `lawn visitors` all skip them. The server does not treat them differently, so the maze still behaves normally when the operator tests it.
+  - **Reload:** SIGHUP re-reads only this key from `config.yaml`; the next shame build applies it.
+  - **Not auto-filled from SSH `admin_cidrs`:** that list can hold shared addresses (airline or café Wi-Fi), and excluding those would hide other people. `/0` is rejected.
+  - **Known gap:** `lawn bots` still computes a user agent's all-time first sighting over every IP, so an operator using the same UA earlier can make a group look less new.
+- **Unlogged maze preview on the admin listener.** It serves `GET /lawn/...` straight from the generator: no drip, limits, log row or classification. It is reachable only through an SSH tunnel, because `admin_listen` is localhost-only and Caddy proxies only the public listener. The index at `/` lists the sitemap entries.
+- **Country per request.** Migration 5 adds `requests.country`: the two-letter code of the IP's range from the iptoasn.com file the ASN lookup already loads. That file's "None" and "Unknown" values are stored as NULL.
+  - **Hot path:** codes are interned at load, so the lookup still does not allocate, and the country is found in the same binary search as the ASN.
+  - **Private:** it appears in `lawn bots` details and `lawn visitors` and is never published.
+- **`lawn visitors`:** a private per-request view; `lawn bots` stays the grouped one.
+  - **Order:** newest first, or oldest first when `--ip` names a single address (that client's timeline).
+  - **Filters:** user agent (case-insensitive, with `%` and `_` taken literally), path prefix, AS number, IP or CIDR (checked in Go, since SQLite cannot test prefixes), and `--lawn`.
+  - **Output:** full IPs, because it is the operator's own log (section 8 governs publication). The default limit is 100.

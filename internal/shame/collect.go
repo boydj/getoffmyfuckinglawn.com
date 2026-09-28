@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"slices"
 	"sort"
 	"time"
@@ -32,6 +33,10 @@ type Options struct {
 	// robots_exempt). Only VERIFIED such clients are split out; a spoofed
 	// claim stays in the Hall of Liars. nil = nobody is exempt.
 	RobotsExempt func(ua string) bool
+	// Exclude is the operator's own networks (config exclude_cidrs). Their
+	// rows are skipped entirely: not on the wall, the well-behaved page,
+	// the feed, the blocklist or in totals.
+	Exclude []netip.Prefix
 }
 
 // StatusUserTriggered marks verified user-initiated fetchers whose vendor
@@ -295,6 +300,7 @@ type atom struct {
 
 type collector struct {
 	exempt func(ua string) bool
+	skip   *logstore.IPSet // operator networks
 	gapMs  int64
 	cut    [NumWindows]int64
 	atoms  map[atomKey]*atom
@@ -521,6 +527,9 @@ func sessionMetrics(ss []logstore.Session) Metrics {
 }
 
 func (c *collector) flushPair(p *pair) {
+	if c.skip.HasBytes(p.ip) {
+		return
+	}
 	if !p.viol {
 		if !p.rolledViol && p.vis[WAll].Robots > 0 {
 			c.flushPolite(p)
@@ -620,7 +629,7 @@ func (c *collector) scanDaily(ctx context.Context, db *sql.DB) error {
 			&sessions, &readRule, &first, &last, &status, &org); err != nil {
 			return fmt.Errorf("shame: scan daily_aggregates: %w", err)
 		}
-		if pages <= 0 {
+		if pages <= 0 || c.skip.Has(ip) {
 			continue
 		}
 		status, org = normalize(status, org)
@@ -662,7 +671,7 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 		return nil, errors.New("shame: nil DB")
 	}
 	now := opt.now().UTC()
-	c := &collector{exempt: opt.RobotsExempt, gapMs: opt.gap().Milliseconds(), atoms: map[atomKey]*atom{}, polite: map[atomKey]*politeAtom{}}
+	c := &collector{exempt: opt.RobotsExempt, skip: logstore.NewIPSet(opt.Exclude), gapMs: opt.gap().Milliseconds(), atoms: map[atomKey]*atom{}, polite: map[atomKey]*politeAtom{}}
 	for w, d := range windowDur {
 		if d > 0 {
 			c.cut[w] = now.Add(-d).UnixMilli()

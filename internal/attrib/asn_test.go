@@ -78,6 +78,14 @@ func TestParseASN(t *testing.T) {
 	if _, _, ok := tab.Lookup(netip.Addr{}); ok {
 		t.Error("zero addr found")
 	}
+	for ip, want := range map[string]string{"1.0.0.9": "US", "1.0.5.9": "AU", "2001:db9::1": "US", "1.0.2.1": "", "::1": ""} {
+		if _, _, cc, _ := tab.LookupCC(netip.MustParseAddr(ip)); cc != want {
+			t.Errorf("%s: country %q, want %q", ip, cc, want)
+		}
+	}
+	if len(tab.ccs) != 3 { // "", US, AU; "None" is not a country
+		t.Errorf("country codes not deduplicated: %q", tab.ccs)
+	}
 }
 
 func TestASNNilAndErrors(t *testing.T) {
@@ -107,7 +115,7 @@ func TestASNLookupNoAlloc(t *testing.T) {
 	a4, a6 := netip.MustParseAddr("8.8.8.8"), netip.MustParseAddr("2001:db8::1")
 	if n := testing.AllocsPerRun(1000, func() {
 		tab.Lookup(a4)
-		tab.Lookup(a6)
+		tab.LookupCC(a6)
 	}); n != 0 {
 		t.Fatalf("Lookup allocates %v", n)
 	}

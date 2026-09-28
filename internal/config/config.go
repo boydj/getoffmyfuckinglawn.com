@@ -77,6 +77,7 @@ type Config struct {
 	AdminListen     string    `yaml:"admin_listen"`
 	BaseURL         string    `yaml:"base_url"`
 	TrustedProxies  []string  `yaml:"trusted_proxies"`
+	ExcludeCIDRs    []string  `yaml:"exclude_cidrs"`
 	ServerSecretEnv string    `yaml:"server_secret_env"`
 	DBPath          string    `yaml:"db_path"`
 	ASNDBPath       string    `yaml:"asn_db_path"`
@@ -97,6 +98,9 @@ type Config struct {
 	Secret []byte `yaml:"-"`
 	// Proxies is TrustedProxies parsed.
 	Proxies []netip.Prefix `yaml:"-"`
+	// Exclude is ExcludeCIDRs parsed: the operator's own networks, kept out
+	// of the wall, the well-behaved page and private reports.
+	Exclude []netip.Prefix `yaml:"-"`
 }
 
 // Default returns the spec defaults (SPEC.md section 9).
@@ -171,6 +175,9 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	if v := getenv("LAWN_TRUSTED_PROXIES"); v != "" {
 		c.TrustedProxies = strings.Split(v, ",")
 	}
+	if v := getenv("LAWN_EXCLUDE_CIDRS"); v != "" {
+		c.ExcludeCIDRs = strings.Split(v, ",")
+	}
 	if c.ServerSecretEnv != "" {
 		if s := getenv(c.ServerSecretEnv); s != "" {
 			c.Secret = []byte(s)
@@ -179,11 +186,10 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	return c, c.Validate()
 }
 
-// Validate parses TrustedProxies into Proxies and checks invariants. Load
-// calls it; call it yourself after building a Config by hand.
-func (c *Config) Validate() error {
-	c.Proxies = nil
-	for _, p := range c.TrustedProxies {
+// parsePrefixes parses CIDRs or bare addresses (as /32 or /128).
+func parsePrefixes(key string, in []string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, p := range in {
 		p = strings.TrimSpace(p)
 		if p == "" {
 			continue
@@ -192,11 +198,30 @@ func (c *Config) Validate() error {
 		if err != nil {
 			addr, aerr := netip.ParseAddr(p)
 			if aerr != nil {
-				return fmt.Errorf("config: trusted_proxies: %q: %w", p, err)
+				return nil, fmt.Errorf("config: %s: %q: %w", key, p, err)
 			}
 			pfx = netip.PrefixFrom(addr, addr.BitLen())
 		}
-		c.Proxies = append(c.Proxies, pfx.Masked())
+		out = append(out, pfx.Masked())
+	}
+	return out, nil
+}
+
+// Validate parses TrustedProxies into Proxies and ExcludeCIDRs into
+// Exclude, and checks invariants. Load calls it; call it yourself after
+// building a Config by hand.
+func (c *Config) Validate() error {
+	var err error
+	if c.Proxies, err = parsePrefixes("trusted_proxies", c.TrustedProxies); err != nil {
+		return err
+	}
+	if c.Exclude, err = parsePrefixes("exclude_cidrs", c.ExcludeCIDRs); err != nil {
+		return err
+	}
+	for _, p := range c.Exclude {
+		if p.Bits() == 0 {
+			return fmt.Errorf("config: exclude_cidrs: %s would hide every visitor", p)
+		}
 	}
 	var errs []error
 	if c.Drip.ChunkBytes <= 0 {

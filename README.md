@@ -96,16 +96,20 @@ lawn stats [--since 24h|7d|30d|all] [--limit N]   # top offenders to stdout
 lawn gen-robots                # print robots.txt in effect (also validates the config)
 lawn bots [--since 7d|36h|all] [--unknown] [--new] [--all] [--limit N] [--details N]
                                # private report on every bot seen, compliant or not
+lawn visitors [--since 24h|7d|all] [--limit N] [--ip ADDR|CIDR] [--asn N] [--ua TEXT]
+              [--path PREFIX] [--lawn] [--operators]
+                               # private per-request log, newest first; --ip ADDR = one client's timeline
 ```
 
-- **SIGHUP** (`systemctl reload lawn`) reloads the ASN table and `crawlers.yaml`.
+- **SIGHUP** (`systemctl reload lawn`) reloads the ASN table, `crawlers.yaml` and `exclude_cidrs` from `config.yaml`. Other `config.yaml` changes need a restart.
 - **SIGTERM** shuts down gracefully and drains the log writer.
 
 ### Configuration
 
 - `config/config.example.yaml` documents every key; the spec defaults are built in.
 - `LAWN_SECRET` (the HMAC key, at least 16 bytes) comes only from the environment, from the variable named by `server_secret_env`.
-- Paths, listeners and trusted proxies can be overridden with `LAWN_DB_PATH`, `LAWN_PUBLIC_DIR`, `LAWN_ASN_DB_PATH`, `LAWN_CORPUS_DIR`, `LAWN_CRAWLERS_FILE`, `LAWN_TEMPLATES_DIR`, `LAWN_RANGES_CACHE_DIR`, `LAWN_LISTEN`, `LAWN_ADMIN_LISTEN`, `LAWN_BASE_URL` and `LAWN_TRUSTED_PROXIES` (comma-separated).
+- Paths, listeners and trusted proxies can be overridden with `LAWN_DB_PATH`, `LAWN_PUBLIC_DIR`, `LAWN_ASN_DB_PATH`, `LAWN_CORPUS_DIR`, `LAWN_CRAWLERS_FILE`, `LAWN_TEMPLATES_DIR`, `LAWN_RANGES_CACHE_DIR`, `LAWN_LISTEN`, `LAWN_ADMIN_LISTEN`, `LAWN_BASE_URL`, `LAWN_TRUSTED_PROXIES` and `LAWN_EXCLUDE_CIDRS` (both comma-separated).
+- **`exclude_cidrs`** lists your own networks. Visits from them are still logged, but left out of the wall, the well-behaved page, the feed, the blocklist, `lawn stats` and `lawn bots`. `lawn visitors` hides them unless you pass `--operators`, which shows them marked `*`. The filter is applied when reports are built, so adding a network also removes its past visits; removing it brings them back. SSH `admin_cidrs` is deliberately not copied in: it can hold shared addresses (an airline's, a café's), and excluding those would hide strangers too.
 
 `config/crawlers.yaml` lists the known crawlers and how each is verified, with a comment citing the vendor's documentation. Where a vendor publishes no verification method, the entry is `verify: none` with a TODO, and hits carrying that UA are labelled "claimed, unverifiable".
 
@@ -211,8 +215,13 @@ lawn stats --since 24h                               # top offenders
 systemctl reload lawn                                # re-read ASN table + crawlers.yaml
 systemctl start lawn-asn-refresh                     # refresh ASN data now
 systemctl start lawn-verify-refresh                  # re-verify identities now
-ssh -L 9090:127.0.0.1:9090 root@<ip>                 # then curl localhost:9090/metrics
+ssh -L 9090:127.0.0.1:9090 root@<ip>                 # then open http://localhost:9090/ (see below)
+lawn visitors --since 24h                            # every recent visit, newest first
+lawn visitors --lawn --since 7d                      # every maze hit this week
+lawn visitors --ip 198.51.100.9 --since all          # one client's full timeline
 ```
+
+**Viewing the maze without being logged.** The admin listener (`admin_listen`, localhost only) also serves the maze: `/lawn/...` renders exactly what the public site would, all at once, with no drip, no limits and no log row. Open an SSH tunnel with `ssh -L 9090:127.0.0.1:9090 root@<ip>` and browse `http://localhost:9090/`. That page lists the sitemap's entry points, and the links on each maze page keep working. `/metrics` is on the same port. Browsing the public site from your own networks is fine too once they are in `exclude_cidrs`.
 
 **Timers**
 - **Weekly iptoasn.com refresh:** validates gzip, size and format, swaps the file in atomically, then reloads lawn.

@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/netip"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/attrib"
+	"github.com/boydj/getoffmyfuckinglawn.com/internal/logstore"
 )
 
 // Options configures Collect.
@@ -19,6 +21,7 @@ type Options struct {
 	NewFor   time.Duration    // a group first seen within this long ago is "new" (default 7d)
 	All      bool             // include clients with no bot signal (likely humans)
 	Now      func() time.Time
+	Exclude  []netip.Prefix // operator networks (config exclude_cidrs): skipped
 }
 
 // Verdicts: what a group did with respect to robots.txt.
@@ -43,6 +46,7 @@ type Client struct {
 	Captured, NoAcceptLg int64 // rows with header data; of those, without Accept-Language
 	HeaderNames          string
 	Proto, TLS           string
+	Country              string // "" = unknown or rolled-up only
 	Frontier
 }
 
@@ -80,6 +84,7 @@ type Bot struct {
 	HeaderNames string
 	Protos      map[string]int64
 	TLS         map[string]int64
+	Countries   map[string]int64 // country code -> requests
 	Frontier
 	Clients []*Client
 }
@@ -109,7 +114,7 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 	if opt.Since > 0 {
 		from = now.Add(-opt.Since).UnixMilli()
 	}
-	clients, err := scanClients(ctx, opt.DB, from, opt.Since == 0)
+	clients, err := scanClients(ctx, opt.DB, from, opt.Since == 0, logstore.NewIPSet(opt.Exclude))
 	if err != nil {
 		return nil, err
 	}
@@ -136,6 +141,7 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 		if b == nil {
 			b = &Bot{Token: key, Statuses: map[string]int{}, IPs: map[string]bool{}, ASNs: map[string]int64{},
 				PTRDomains: map[string]int64{}, Reasons: map[string]bool{}, Protos: map[string]int64{}, TLS: map[string]int64{},
+				Countries: map[string]int64{},
 				FirstSeen: c.First}
 			groups[key] = b
 		}
@@ -219,6 +225,9 @@ func (b *Bot) add(c *Client, reasons []string, crawlers []attrib.Crawler) {
 	if c.TLS != "" {
 		b.TLS[c.TLS] += c.Requests
 	}
+	if c.Country != "" {
+		b.Countries[c.Country] += c.Requests
+	}
 	if b.SampleUA == "" || (b.Contact == "" && Contact(c.UA) != "") {
 		b.SampleUA = c.UA
 		b.Contact = Contact(c.UA)
@@ -260,10 +269,11 @@ func asnLabel(asn int64, org string) string {
 
 // scanClients aggregates raw requests since from (unix ms) per (ip, ua),
 // joined with identities and hosts. withDaily adds rolled-up visits.
-func scanClients(ctx context.Context, db *sql.DB, from int64, withDaily bool) ([]*Client, error) {
+// Clients whose IP is in skip (operator networks) are left out.
+func scanClients(ctx context.Context, db *sql.DB, from int64, withDaily bool, skip *logstore.IPSet) ([]*Client, error) {
 	q := `
 SELECT r.ip, r.ua, r.asn, r.asn_org, r.requests, r.robots, r.bait, r.violations, r.max_depth, r.first, r.last,
-       r.captured, r.no_al, r.header_names, r.proto, r.tls,
+       r.captured, r.no_al, r.header_names, r.proto, r.tls, r.country,
        COALESCE(i.status, ''), COALESCE(i.claimed_org, ''), COALESCE(h.ptr, '')
 FROM (
   SELECT ip, COALESCE(user_agent, '') AS ua, COALESCE(MAX(asn), 0) AS asn, COALESCE(MAX(asn_org), '') AS asn_org,
@@ -276,7 +286,8 @@ FROM (
          SUM(header_names IS NOT NULL) AS captured,
          SUM(header_names IS NOT NULL AND accept_language IS NULL) AS no_al,
          COALESCE(MAX(header_names), '') AS header_names,
-         COALESCE(MAX(proto), '') AS proto, COALESCE(MAX(tls), '') AS tls
+         COALESCE(MAX(proto), '') AS proto, COALESCE(MAX(tls), '') AS tls,
+         COALESCE(MAX(country), '') AS country
   FROM requests WHERE ts_start >= ?
   GROUP BY ip, COALESCE(user_agent, '')
 ) r
@@ -291,10 +302,13 @@ LEFT JOIN hosts h ON h.ip = r.ip`
 	for rows.Next() {
 		c := &Client{}
 		if err := rows.Scan(&c.IP, &c.UA, &c.ASN, &c.ASNOrg, &c.Requests, &c.Robots, &c.Bait, &c.Violations, &c.MaxDepth,
-			&c.First, &c.Last, &c.Captured, &c.NoAcceptLg, &c.HeaderNames, &c.Proto, &c.TLS,
+			&c.First, &c.Last, &c.Captured, &c.NoAcceptLg, &c.HeaderNames, &c.Proto, &c.TLS, &c.Country,
 			&c.Status, &c.ClaimedOrg, &c.PTR); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("bots: scan: %w", err)
+		}
+		if skip.Has(c.IP) {
+			continue
 		}
 		byKey[[2]string{c.IP, c.UA}] = c
 		out = append(out, c)
@@ -326,6 +340,9 @@ GROUP BY d.ip, d.user_agent`)
 		if err := rows.Scan(&d.IP, &d.UA, &d.ASN, &d.ASNOrg, &d.Requests, &d.Robots, &d.Bait, &d.Violations,
 			&d.First, &d.Last, &d.Status, &d.ClaimedOrg, &d.PTR); err != nil {
 			return nil, fmt.Errorf("bots: daily: %w", err)
+		}
+		if skip.Has(d.IP) {
+			continue
 		}
 		if c := byKey[[2]string{d.IP, d.UA}]; c != nil {
 			c.Requests += d.Requests
