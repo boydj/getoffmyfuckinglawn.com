@@ -289,3 +289,33 @@ func TestExcludeAndCountries(t *testing.T) {
 		t.Error("exclusion removed an unrelated bot")
 	}
 }
+
+func TestSmallWebClients(t *testing.T) {
+	s, cr, now := fixture(t)
+	at := now.Add(-time.Hour).UnixMilli()
+	rows := []logstore.Request{
+		// A gopher crawler walks in; a gemini reader only reads the root.
+		{TsStart: at, TsEnd: at + 5, IP: "198.51.100.40", Method: "GET", Path: "/lawn/abc", Depth: 0, IsViolation: true, Scheme: "gopher", Proto: "gopher"},
+		{TsStart: at, TsEnd: at + 5, IP: "198.51.100.41", Method: "GET", Path: "/", Depth: -1, Scheme: "gemini", Proto: "gemini"},
+	}
+	if err := s.InsertRequests(context.Background(), rows); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Collect(context.Background(), Options{DB: s.DB(), Crawlers: cr, Since: 24 * time.Hour, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := byToken(r)
+	g := m["(gopher client)"]
+	if g == nil || g.Schemes["gopher"] != 1 || g.Violations != 1 {
+		t.Fatalf("gopher client: %+v", g)
+	}
+	if _, ok := m["(gemini client)"]; ok {
+		t.Error("a gemini client with no bot signal must not be listed")
+	}
+	var out bytes.Buffer
+	Write(&out, r, WriteOptions{Details: 20})
+	if !strings.Contains(out.String(), "via:          gopher x1") {
+		t.Errorf("report:\n%s", out.String())
+	}
+}

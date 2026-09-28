@@ -100,6 +100,7 @@ func writeDetails(w io.Writer, b *Bot) {
 	fmt.Fprintf(w, "  PTR domains:  %s\n", joinOr(top(b.PTRDomains, 3), "none"))
 	fmt.Fprintf(w, "  countries:    %s\n", joinOr(top(b.Countries, 5), "-"))
 	fmt.Fprintf(w, "  headers sent: %s\n", orDash(b.HeaderNames))
+	fmt.Fprintf(w, "  via:          %s\n", schemeSummary(b.Schemes))
 	fmt.Fprintf(w, "  protocol:     %s\n", joinOr(top(b.Protos, 2), "-"))
 	fmt.Fprintf(w, "  TLS:          %s\n", joinOr(top(b.TLS, 2), "-"))
 	fmt.Fprintf(w, "  activity:     %d requests from %d IPs; %d robots.txt, %d bait pages, %d /lawn/ (max depth %d)\n",
@@ -124,6 +125,16 @@ func (f Frontier) openShare() string {
 		return "-"
 	}
 	return fmt.Sprintf("%d%%", f.Open*100/f.Follows)
+}
+
+// schemeSummary lists the schemes a bot used, with how many of its clients
+// used each: "https x3, gopher x1".
+func schemeSummary(m map[string]int) string {
+	var parts []string
+	for _, k := range sortedKeys(m) {
+		parts = append(parts, fmt.Sprintf("%s x%d", k, m[k]))
+	}
+	return joinOr(parts, "-")
 }
 
 func statusSummary(m map[string]int) string {

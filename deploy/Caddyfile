@@ -5,9 +5,9 @@
 # /etc/lawn/caddy.env. Caddy obtains and renews certificates automatically.
 {
 	servers {
-		# HTTP/3 would need UDP 443 open in the Vultr firewall; the tarpit only
-		# needs TCP.
-		protocols h1 h2
+		# HTTP/3 needs UDP 443 open in the Vultr firewall and ufw (both done
+		# by infra/ and host-setup.sh). Caddy advertises it with Alt-Svc.
+		protocols h1 h2 h3
 		timeouts {
 			# Slowloris guard on Caddy's side. No read_body/write timeouts: the
 			# maze deliberately keeps responses open for up to 10 minutes.
@@ -36,51 +36,72 @@
 	}
 }
 
+# Every site but www's HTTPS redirect hands every request to the app, which
+# logs it. Deliberately
+# absent:
+#   encode - compression buffers the body and would defeat the slow drip.
+#   log    - the app already records every request in SQLite; no per-request
+#            access log on disk.
+# X-Forwarded-For is set by reverse_proxy from the real client address (Caddy
+# ignores any client-supplied value because no trusted_proxies are
+# configured), and X-Forwarded-Proto from how the client connected. The app
+# trusts both only from 127.0.0.1/32 and ::1/128. /metrics is never proxied:
+# the app serves it only on the admin listener (127.0.0.1:9090).
+(lawn_proxy) {
+	# Flush every write immediately so each drip chunk reaches the client.
+	flush_interval -1
+	# How the client connected, for telling crawlers apart. header_up
+	# overwrites any client-supplied value, and the app reads these only from
+	# a trusted proxy.
+	header_up X-Lawn-Client-Proto {http.request.proto}
+	transport http {
+		dial_timeout 3s
+		# Otherwise the transport adds "Accept-Encoding: gzip" when the client
+		# sent none, and the app would log Caddy's header as the client's.
+		compression off
+	}
+}
+
+# Plain HTTP carries no TLS details.
+(plain_to_lawn) {
+	reverse_proxy 127.0.0.1:8080 {
+		import lawn_proxy
+		header_up -X-Lawn-Client-TLS
+	}
+}
+
 www.{$LAWN_DOMAIN} {
 	redir https://{$LAWN_DOMAIN}{uri} permanent
 }
 
 {$LAWN_DOMAIN} {
-	# Deliberately absent:
-	#   encode - compression buffers the body and would defeat the slow drip.
-	#   log    - the app already records every request in SQLite; no per-request
-	#            access log on disk.
-	# X-Forwarded-For is set by reverse_proxy from the real client address
-	# (Caddy ignores any client-supplied value because no trusted_proxies are
-	# configured). The app trusts it only from 127.0.0.1/32 and ::1/128.
-	# /metrics is not proxied anywhere special: the app serves it only on the
-	# admin listener (127.0.0.1:9090), which Caddy never touches.
 	reverse_proxy 127.0.0.1:8080 {
-		# Flush every write immediately so each drip chunk reaches the client.
-		flush_interval -1
-		# How the client connected, for telling crawlers apart. header_up
-		# overwrites any client-supplied value, and the app reads these only
-		# from a trusted proxy.
-		header_up X-Lawn-Client-Proto {http.request.proto}
+		import lawn_proxy
 		header_up X-Lawn-Client-TLS "{http.request.tls.version} {http.request.tls.cipher_suite} {http.request.tls.proto}"
-		transport http {
-			dial_timeout 3s
-			# Otherwise the transport adds "Accept-Encoding: gzip" when the
-			# client sent none, and the app would log Caddy's header as the
-			# client's.
-			compression off
-		}
 	}
+}
+
+# Plain HTTP on port 80, for the site's names and any other Host (bare-IP
+# scanners). Naming the hosts replaces Caddy's automatic HTTP->HTTPS
+# redirect for them, so these requests are logged too: the app serves
+# robots.txt and the maze over plain HTTP, like over HTTPS, and redirects
+# everything else to HTTPS itself. Caddy still answers ACME HTTP-01
+# challenges before any route runs. Plain HTTP has no TLS details to pass.
+# (Separate blocks: combined with the catch-all, the names lose their host
+# match and Caddy adds its own redirects back.)
+http://{$LAWN_DOMAIN}, http://www.{$LAWN_DOMAIN} {
+	import plain_to_lawn
+}
+
+http:// {
+	import plain_to_lawn
 }
 
 # The onion mirror: plain HTTP (onion addresses are end-to-end encrypted by
 # Tor), any Host, localhost only. X-Forwarded-For carries the circuit address
 # from the PROXY header, fc00:dead:beef:4dad::/96, which the app recognises
-# as Tor. Same proxy settings as above, minus TLS details.
+# as Tor.
 http://:8081 {
 	bind 127.0.0.1
-	reverse_proxy 127.0.0.1:8080 {
-		flush_interval -1
-		header_up X-Lawn-Client-Proto {http.request.proto}
-		header_up -X-Lawn-Client-TLS
-		transport http {
-			dial_timeout 3s
-			compression off
-		}
-	}
+	import plain_to_lawn
 }

@@ -23,6 +23,18 @@ Clients that respect `robots.txt`, search engines included, are never trapped an
 | `/healthz` | `ok` |
 | `/metrics` | Prometheus text, **admin listener only** (`127.0.0.1:9090`) |
 
+**Protocols.** The same rule and the same maze are served over every protocol, and every request is logged with how it arrived (the `scheme` column, plus `proto` for the HTTP version):
+
+| Where | How |
+|---|---|
+| `https://` (TCP 443, HTTP/1.1 and HTTP/2; UDP 443, HTTP/3) | Caddy with Let's Encrypt, advertising HTTP/3 with `Alt-Svc` |
+| `http://` (TCP 80) | Caddy passes every plain-HTTP request to the app, which logs it, serves `/robots.txt` and `/lawn/` as over HTTPS, and redirects everything else to HTTPS with a 301. Bare-IP scanners on port 80 are logged too |
+| `http://<onion>` (Tor) | See [Tor onion mirror](#tor-onion-mirror) |
+| `gopher://` (TCP 70) | Served by `lawn` itself (RFC 1436). Root menu, `robots.txt`, and the maze as gopher menus with text in info lines |
+| `gemini://` (TCP 1965, TLS) | Served by `lawn` itself, with a self-signed certificate kept in `/var/lib/lawn/gemini` (Gemini clients pin it on first use). Root page, `/robots.txt`, and the maze as gemtext |
+
+A page has the same title, links, anchors and text in every format, so the maze is one maze. Gopher and Gemini maze responses are dripped like HTTP ones, links first, with the same limits and adaptive budget. Over a limit, Gopher gets an error item and Gemini a `44 60` (slow down). Gopher and Gemini have no user agent, so `lawn bots` groups such clients as "(gopher client)" and "(gemini client)". Like browsers, they need a bot signal (fetching `robots.txt`, entering `/lawn/`) to be listed.
+
 **The maze pages**
 - Pages are deterministic: a ChaCha8 PRNG is seeded with `HMAC-SHA256(secret, path)`.
 - Text comes from an order-2 Markov chain trained on three public-domain Project Gutenberg novels in `corpus/`.
@@ -72,7 +84,7 @@ make test        # unit + integration tests (-race)
 make vet         # go vet + staticcheck
 make lint        # vet + gofmt + shellcheck + tofu fmt
 make validate    # tofu fmt -check + tofu validate (no credentials needed)
-make run         # serve on 127.0.0.1:8080 (admin :9090) with throwaway state in data/dev
+make run         # serve on 127.0.0.1:8080 (admin :9090, gopher :7070, gemini :1965) with throwaway state in data/dev
 make loadtest    # 5000 slow connections against a local server; see tools/loadtest.sh
 ```
 
@@ -82,6 +94,8 @@ make loadtest    # 5000 slow connections against a local server; see tools/loadt
 curl -s localhost:8080/sitemap.xml | grep -o '/lawn/[^<]*' | head -1   # a bait URL
 curl -sN localhost:8080/lawn/<token>                                   # watch it drip
 curl -s localhost:9090/metrics | grep ^lawn_
+printf '/robots.txt\r\n' | nc localhost 7070                              # gopher
+printf 'gemini://localhost/\r\n' | openssl s_client -quiet -connect localhost:1965 2>/dev/null   # gemini
 ```
 
 ### CLI
@@ -97,7 +111,7 @@ lawn gen-robots                # print robots.txt in effect (also validates the 
 lawn bots [--since 7d|36h|all] [--unknown] [--new] [--all] [--limit N] [--details N]
                                # private report on every bot seen, compliant or not
 lawn visitors [--since 24h|7d|all] [--limit N] [--ip ADDR|CIDR] [--asn N] [--ua TEXT]
-              [--path PREFIX] [--lawn] [--operators]
+              [--path PREFIX] [--scheme https|http|gopher|gemini] [--lawn] [--operators]
                                # private per-request log, newest first; --ip ADDR = one client's timeline
 ```
 
@@ -120,7 +134,7 @@ Everything goes through `make`. The target is one dedicated Vultr instance that 
 **What gets built**
 - **`infra/`** (OpenTofu, official `vultr/vultr` provider) creates:
   - a Debian 12 `vc2-2c-2gb` instance (2 vCPU / 2 GB, region `ewr` by default, IPv6 on);
-  - a firewall group: SSH only from `admin_cidrs`, 80/443 and ICMP from anywhere;
+  - a firewall group: SSH only from `admin_cidrs`; from anywhere, TCP 80, 443, 70 (Gopher) and 1965 (Gemini), UDP 443 (HTTP/3) and ICMP;
   - your SSH key;
   - a Vultr DNS zone with A/AAAA records for the apex and `www`;
   - `LAWN_SECRET`, generated once with `random_password`.
@@ -285,10 +299,10 @@ The whole site is also served as a Tor onion service, set up by `make deploy` wi
 
 ```sh
 make onion-address      # the mirror's hostname
-make onion-backup       # copy its private key off the box to onion-keys.tar.gz (gitignored; keep it safe)
+make keys-backup        # copy its private key and the Gemini certificate off the box to lawn-keys.tar.gz (gitignored; keep it safe)
 ```
 
-- **The key is the address.** It lives only in `/var/lib/tor/lawn/`, and a rebuilt server gets a new address unless you restore it. To restore on a new box, before the first deploy: `tar -C /var/lib/tor -xzf onion-keys.tar.gz`, then `chown -R debian-tor:debian-tor /var/lib/tor/lawn && chmod 700 /var/lib/tor/lawn`. Per tor(1), that directory must never be reused for a normal (anonymous) onion service.
+- **The key is the address.** It lives only in `/var/lib/tor/lawn/`, and a rebuilt server gets a new address unless you restore it. The same goes for the Gemini certificate in `/var/lib/lawn/gemini/`: clients that pinned it reject a new one. To restore both on a new box, before the first deploy: `tar -C / -xzf lawn-keys.tar.gz`, then `chown -R debian-tor:debian-tor /var/lib/tor/lawn && chmod 700 /var/lib/tor/lawn` and `chown -R lawn:lawn /var/lib/lawn/gemini`. (A backup made with the older `make onion-backup` holds only the onion key: `tar -C /var/lib/tor -xzf onion-keys.tar.gz`.) Per tor(1), that directory must never be reused for a normal (anonymous) onion service.
 - **To turn the mirror off:** `systemctl disable --now tor@default`, then remove `LAWN_ONION_ADDRESS` from `/etc/lawn/env` and `systemctl restart lawn`. The next deploy turns it back on.
 
 ### Backups and restore
@@ -315,7 +329,7 @@ This deletes the instance (with its database and on-box backups), the firewall g
 ### Cost and isolation
 
 - **Cost:** check Vultr's current pricing for `vc2-2c-2gb`. Vultr DNS is free, and Vultr automatic backups are off because the box keeps its own.
-- **Isolation:** don't co-host anything else on the box or reuse its IP. Only 80/443 and ICMP are open to the world, and password SSH is off.
+- **Isolation:** don't co-host anything else on the box or reuse its IP. Only the public service ports (80, 443 over TCP and UDP, 70, 1965) and ICMP are open to the world, and password SSH is off.
 
 ## Status
 

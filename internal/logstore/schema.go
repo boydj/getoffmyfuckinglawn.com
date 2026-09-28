@@ -116,4 +116,9 @@ CREATE INDEX idx_req_page ON requests(page_id) WHERE page_id IS NOT NULL;
 	`
 ALTER TABLE requests ADD COLUMN country TEXT;
 `,
+	// 6: which protocol a request arrived by: https, http (port 80 or the
+	// onion mirror), gopher or gemini. proto keeps the version detail.
+	`
+ALTER TABLE requests ADD COLUMN scheme TEXT;
+`,
 }

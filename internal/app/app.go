@@ -7,11 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"net"
 	"net/http"
 	"net/netip"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +26,7 @@ import (
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/maze"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/server"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/shame"
+	"github.com/boydj/getoffmyfuckinglawn.com/internal/smallweb"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/visitors"
 	"github.com/boydj/getoffmyfuckinglawn.com/web"
 )
@@ -56,6 +59,7 @@ type App struct {
 	crawlers   atomic.Pointer[[]attrib.Crawler] // for the shame builder's exemptions
 	exclude    atomic.Pointer[[]netip.Prefix]   // operator networks (exclude_cidrs)
 	pages      server.PageRenderer              // maze generator, for the admin preview
+	small      *smallweb.Server                 // Gopher and Gemini; nil when both are off
 }
 
 func (o *Options) defaults() {
@@ -137,6 +141,8 @@ func New(cfg config.Config, opt Options) (*App, error) {
 		Bait:      gen.EntryURLs(6),
 		BaseURL:   cfg.BaseURL,
 		Onion:     cfg.OnionAddress,
+		Gopher:    template.URL(smallURL("gopher", cfg.Host(), cfg.GopherListen, 70)),
+		Gemini:    template.URL(smallURL("gemini", cfg.Host(), cfg.GeminiListen, 1965)),
 	})
 	if err != nil {
 		st.Close()
@@ -159,6 +165,18 @@ func New(cfg config.Config, opt Options) (*App, error) {
 		Onion:     cfg.OnionAddress,
 		Now:       opt.Now,
 	})
+	if cfg.GopherListen != "" || cfg.GeminiListen != "" {
+		port := 0
+		if cfg.GopherListen != "" {
+			port, _ = cfg.GopherPort() // validated by config
+		}
+		a.small = smallweb.New(smallweb.Deps{
+			Pages: gen, Dripper: dripper, Limiter: limiter, Rate: rate, Patience: patience,
+			Logger: a.Writer, Observer: a.Classifier, Lookup: a.Server.LookupASN,
+			Host: cfg.Host(), GopherPort: port, WebURL: cfg.BaseURL,
+			MaxDrip: cfg.Drip.MaxDuration, Now: opt.Now,
+		})
+	}
 	if err := a.loadASN(); err != nil {
 		opt.Logf("asn: %v (continuing without ASN attribution)", err)
 	}
@@ -271,10 +289,70 @@ func (a *App) Run(ctx context.Context) error {
 		pubLn.Close()
 		return err
 	}
-	return a.serve(ctx, pub, adm, pubLn, admLn)
+	small, err := a.listenSmallWeb()
+	if err != nil {
+		pubLn.Close()
+		admLn.Close()
+		return err
+	}
+	return a.serve(ctx, pub, adm, pubLn, admLn, small...)
 }
 
-func (a *App) serve(ctx context.Context, pub, adm *http.Server, pubLn, admLn net.Listener) error {
+// smallURL is the public URL of a small-web mirror listening on listen
+// ("" when off), with the port only when it isn't the protocol's default.
+func smallURL(scheme, host, listen string, defPort int) string {
+	if listen == "" {
+		return ""
+	}
+	_, port, err := net.SplitHostPort(listen)
+	if err != nil || port == "0" || port == strconv.Itoa(defPort) {
+		return scheme + "://" + host + "/"
+	}
+	return scheme + "://" + net.JoinHostPort(host, port) + "/"
+}
+
+// smallListener is a Gopher or Gemini listener ready to serve.
+type smallListener struct {
+	name  string
+	ln    net.Listener
+	serve func(net.Listener) error
+}
+
+// listenSmallWeb opens the Gopher and Gemini listeners that are configured
+// (binding ports below 1024 needs CAP_NET_BIND_SERVICE; see lawn.service).
+func (a *App) listenSmallWeb() ([]smallListener, error) {
+	if a.small == nil {
+		return nil, nil
+	}
+	var out []smallListener
+	fail := func(err error) ([]smallListener, error) {
+		for _, l := range out {
+			l.ln.Close()
+		}
+		return nil, err
+	}
+	if a.Cfg.GopherListen != "" {
+		ln, err := net.Listen("tcp", a.Cfg.GopherListen)
+		if err != nil {
+			return fail(fmt.Errorf("gopher: %w", err))
+		}
+		out = append(out, smallListener{"gopher", ln, a.small.ServeGopher})
+	}
+	if a.Cfg.GeminiListen != "" {
+		cert, err := smallweb.LoadOrCreateCert(a.Cfg.GeminiCertDir, a.Cfg.Host(), a.opt.Now())
+		if err != nil {
+			return fail(err)
+		}
+		ln, err := net.Listen("tcp", a.Cfg.GeminiListen)
+		if err != nil {
+			return fail(fmt.Errorf("gemini: %w", err))
+		}
+		out = append(out, smallListener{"gemini", ln, func(l net.Listener) error { return a.small.ServeGemini(l, cert) }})
+	}
+	return out, nil
+}
+
+func (a *App) serve(ctx context.Context, pub, adm *http.Server, pubLn, admLn net.Listener, small ...smallListener) error {
 	bg, cancelBG := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	start := func(f func(context.Context)) {
@@ -291,16 +369,20 @@ func (a *App) serve(ctx context.Context, pub, adm *http.Server, pubLn, admLn net
 	start(a.shameLoop)
 	start(a.retentionLoop)
 
-	errc := make(chan error, 2)
+	errc := make(chan error, 2+len(small))
 	go func() { errc <- pub.Serve(pubLn) }()
 	go func() { errc <- adm.Serve(admLn) }()
 	a.opt.Logf("serving public on %s, admin on %s", pubLn.Addr(), admLn.Addr())
+	for _, l := range small {
+		go func() { errc <- l.serve(l.ln) }()
+		a.opt.Logf("serving %s on %s", l.name, l.ln.Addr())
+	}
 
 	var runErr error
 	select {
 	case <-ctx.Done():
 	case err := <-errc:
-		if !errors.Is(err, http.ErrServerClosed) {
+		if !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, smallweb.ErrClosed) {
 			runErr = err
 		}
 	}
@@ -310,6 +392,9 @@ func (a *App) serve(ctx context.Context, pub, adm *http.Server, pubLn, admLn net
 		pub.Close()
 	}
 	adm.Shutdown(sctx)
+	if a.small != nil {
+		a.small.Shutdown(sctx)
+	}
 	cancel()
 	cancelBG()
 	wg.Wait()
@@ -397,6 +482,13 @@ func (a *App) registerMetrics() {
 	g("lawn_patience_tracked", "Clients with a learned drip budget (adaptive drip).", "gauge", func() float64 { return float64(a.patience.Len()) })
 	g("lawn_classifier_ptr_lookups_total", "Reverse-DNS lookups recorded for the hosts table.", "counter", func() float64 { return float64(a.Classifier.Stats().PTRLookups) })
 	g("lawn_asn_ranges", "Ranges in the loaded ASN table.", "gauge", func() float64 { return float64(a.asnEntries.Load()) })
+	if sw := a.small; sw != nil {
+		g("lawn_gopher_requests_total", "Gopher requests.", "counter", func() float64 { return float64(sw.Metrics.Gopher.Load()) })
+		g("lawn_gemini_requests_total", "Gemini requests.", "counter", func() float64 { return float64(sw.Metrics.Gemini.Load()) })
+		g("lawn_smallweb_violations_total", "Gopher and Gemini requests for /lawn/.", "counter", func() float64 { return float64(sw.Metrics.Violations.Load()) })
+		g("lawn_smallweb_shed_total", "Gopher and Gemini maze requests over a limit.", "counter", func() float64 { return float64(sw.Metrics.Shed.Load()) })
+		g("lawn_smallweb_bytes_sent_total", "Bytes sent over Gopher and Gemini.", "counter", func() float64 { return float64(sw.Metrics.BytesSent.Load()) })
+	}
 	g("lawn_shame_last_build_timestamp_seconds", "Unix time of the last successful shame build.", "gauge", func() float64 { return float64(a.lastBuild.Load()) })
 }
 

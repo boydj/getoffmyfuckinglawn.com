@@ -56,6 +56,9 @@ mkdir -p "$TMP/public" "$TMP/ranges"
 cat >"$TMP/config.yaml" <<EOF
 listen: "127.0.0.1:${PORT}"
 admin_listen: "127.0.0.1:${ADMIN_PORT}"
+# HTTP only: the small-web listeners would need privileged ports.
+gopher_listen: "off"
+gemini_listen: "off"
 base_url: "http://127.0.0.1:${PORT}"
 trusted_proxies: ["127.0.0.1/32"]
 server_secret_env: "LAWN_SECRET"

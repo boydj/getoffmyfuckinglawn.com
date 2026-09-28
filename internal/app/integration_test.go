@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -333,5 +334,94 @@ func TestIntegrationCrawlerWalk(t *testing.T) {
 	resp.Body.Close()
 	if !strings.Contains(string(mb), "lawn_violations_total 53") {
 		t.Errorf("metrics:\n%s", mb)
+	}
+}
+
+// Gopher and Gemini go through the same pipeline: served, dripped, logged
+// with their scheme, and counted as violations.
+func TestIntegrationSmallWeb(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.GopherListen, cfg.GeminiListen = "127.0.0.1:0", "127.0.0.1:0"
+	cfg.GeminiCertDir = filepath.Join(t.TempDir(), "gemini")
+	a, err := New(cfg, Options{Resolver: noDNS{}, Fetcher: func(context.Context, string) ([]byte, error) {
+		return nil, errors.New("no network in tests")
+	}, Logf: t.Logf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	small, err := a.listenSmallWeb()
+	if err != nil || len(small) != 2 {
+		t.Fatalf("listeners: %v %d", err, len(small))
+	}
+	pubLn, _ := net.Listen("tcp", "127.0.0.1:0")
+	admLn, _ := net.Listen("tcp", "127.0.0.1:0")
+	pub := server.NewPublicServer("", a.Server, cfg.Drip.MaxDuration)
+	adm := server.NewAdminServer("", a.Metrics, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.serve(ctx, pub, adm, pubLn, admLn, small...) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("serve: %v", err)
+		}
+	}()
+
+	ask := func(c net.Conn, req string) string {
+		t.Helper()
+		defer c.Close()
+		c.SetDeadline(time.Now().Add(10 * time.Second))
+		io.WriteString(c, req)
+		b, _ := io.ReadAll(c)
+		return string(b)
+	}
+	gopher := func(sel string) string {
+		c, err := net.Dial("tcp", small[0].ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ask(c, sel+"\r\n")
+	}
+	gemini := func(path string) string {
+		c, err := tls.Dial("tcp", small[1].ln.Addr().String(), &tls.Config{InsecureSkipVerify: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ask(c, "gemini://lawn.example"+path+"\r\n")
+	}
+
+	root := gopher("")
+	sel := regexp.MustCompile(`\n1Lawn\t(/lawn/[^\t]+)\t`).FindStringSubmatch(root)
+	if sel == nil {
+		t.Fatalf("gopher root:\n%s", root)
+	}
+	page := gopher(sel[1])
+	child := regexp.MustCompile(`\n1[^\t]*\t(/lawn/[^\t]+)\t`).FindStringSubmatch(page)
+	if child == nil {
+		t.Fatalf("gopher maze page:\n%s", page)
+	}
+	gopher(child[1]) // one level deeper: depth 1
+	if got := gemini("/robots.txt"); !strings.HasSuffix(got, server.RobotsTxt) {
+		t.Fatalf("gemini robots: %q", got)
+	}
+	if got := gemini(sel[1]); !strings.HasPrefix(got, "20 text/gemini") {
+		t.Fatalf("gemini maze: %q", got)
+	}
+
+	db := a.Store.DB()
+	var gopherViol, geminiViol, maxDepth, robots int
+	waitFor(t, "small-web rows", func() bool {
+		db.QueryRow(`SELECT COUNT(*), COALESCE(MAX(depth), 0) FROM requests WHERE scheme = 'gopher' AND is_violation = 1 AND end_reason = 'complete'`).Scan(&gopherViol, &maxDepth)
+		db.QueryRow(`SELECT COUNT(*) FROM requests WHERE scheme = 'gemini' AND is_violation = 1`).Scan(&geminiViol)
+		db.QueryRow(`SELECT COUNT(*) FROM robots_fetches`).Scan(&robots)
+		return gopherViol == 2 && geminiViol == 1 && robots == 1
+	})
+	if maxDepth != 1 {
+		t.Errorf("gopher child depth %d", maxDepth)
+	}
+	var parent int
+	db.QueryRow(`SELECT COUNT(*) FROM requests WHERE scheme = 'gopher' AND parent_id IS NOT NULL`).Scan(&parent)
+	if parent != 1 {
+		t.Errorf("gopher child should carry its parent id: %d", parent)
 	}
 }

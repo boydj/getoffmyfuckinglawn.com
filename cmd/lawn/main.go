@@ -39,7 +39,7 @@ commands:
                    --all, --limit N, --details N)
   visitors         private log of recent visits, newest first (--since 24h|7d|all,
                    --limit N [100], --ip ADDR|CIDR, --asn N, --ua TEXT,
-                   --path PREFIX, --lawn, --operators); --ip ADDR gives
+                   --path PREFIX, --scheme S, --lawn, --operators); --ip ADDR gives
                    that client's timeline, oldest first
   gen-robots       print robots.txt in effect
   version          print the build version
@@ -93,6 +93,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	uaFlag := fs.String("ua", "", "visitors: user agent contains (case-insensitive)")
 	pathFlag := fs.String("path", "", "visitors: path starts with")
 	lawnOnly := fs.Bool("lawn", false, "visitors: only /lawn/ requests")
+	schemeFlag := fs.String("scheme", "", "visitors: only https, http, gopher or gemini")
 	operators := fs.Bool("operators", false, "visitors: include your own networks (exclude_cidrs), marked *")
 	if err := fs.Parse(rest); err != nil {
 		return err
@@ -135,7 +136,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			n = 100
 		}
 		return app.Visitors(ctx, cfg, *since, visitors.Options{IP: *ipFlag, ASN: *asnFlag, UA: *uaFlag,
-			Path: *pathFlag, LawnOnly: *lawnOnly, Operators: *operators, Limit: n}, stdout)
+			Path: *pathFlag, LawnOnly: *lawnOnly, Scheme: *schemeFlag, Operators: *operators, Limit: n}, stdout)
 	default:
 		fmt.Fprint(stderr, usage)
 		return fmt.Errorf("unknown command %q", cmd)

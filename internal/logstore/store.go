@@ -56,6 +56,8 @@ type Request struct {
 	ParentID uint32 // id of the page whose link led here
 	// Added by migration 5. "" = NULL.
 	Country string // two-letter code of the IP's range (iptoasn.com)
+	// Added by migration 6. "" = NULL.
+	Scheme string // https, http, gopher or gemini
 }
 
 // Host is one row of hosts: reverse DNS for an IP.
@@ -176,8 +178,8 @@ func (s *Store) InsertRequests(ctx context.Context, rows []Request) error {
 	st, err := tx.PrepareContext(ctx, `INSERT INTO requests
 	 (ts_start, ts_end, ip, asn, asn_org, user_agent, method, path, depth, is_violation, bytes_sent, dripped, status,
 	  end_reason, referer, accept, accept_language, accept_encoding, header_names, proto, tls,
-	  page_id, parent_id, country)
-	 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	  page_id, parent_id, country, scheme)
+	 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return err
 	}
@@ -190,7 +192,7 @@ func (s *Store) InsertRequests(ctx context.Context, rows []Request) error {
 			nullStr(r.EndReason), nullStr(r.Referer), nullStr(r.Accept), nullStr(r.AcceptLanguage), nullStr(r.AcceptEncoding),
 			nullStr(r.HeaderNames), nullStr(r.Proto), nullStr(r.TLS),
 			nullInt(int64(r.PageID), r.PageID == 0), nullInt(int64(r.ParentID), r.ParentID == 0),
-			nullStr(r.Country)); err != nil {
+			nullStr(r.Country), nullStr(r.Scheme)); err != nil {
 			return fmt.Errorf("logstore: insert request: %w", err)
 		}
 	}

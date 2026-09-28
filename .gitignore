@@ -24,6 +24,7 @@ crash.log
 # secrets
 .env
 onion-keys*.tar.gz*
+lawn-keys*.tar.gz*
 *.pem
 id_*
 infra/.terraform.lock.hcl
