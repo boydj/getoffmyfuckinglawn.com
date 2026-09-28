@@ -261,3 +261,29 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
   - **What the app does with it:** sends `Onion-Location` on clearnet HTML pages (home, wall), links the mirror from the home page, and serves onion visitors a sitemap with onion links. Nothing else changes, since maze links are root-relative.
   - **Not on the maze:** `Onion-Location` stays off maze responses, to keep the hot path free of allocations.
 - **Key backup is off-box and manual (`make onion-backup`).** The nightly backup runs as `lawn` with no access to tor's directory, and an on-box copy wouldn't survive losing the box, which is the case that matters.
+
+## More protocols: plain HTTP, HTTP/3, Gopher, Gemini (follow-up)
+
+- **Port 80 goes through the app, not Caddy's automatic redirect.** Before this, plain-HTTP requests never reached the log, so crawlers that start from `http://` URLs, never follow redirects, or scan bare IPs were invisible.
+  - **What the app does:** it serves `/robots.txt`, `/lawn/` and `/healthz` over plain HTTP exactly as over HTTPS, so the rule applies everywhere and http-only crawlers are trapped too. Everything else gets a 301 to `base_url`.
+  - **What stays:** the `www` HTTPS redirect.
+  - **The onion mirror is plain HTTP by design,** so it is never redirected.
+  - **Detection:** Caddy's own `X-Forwarded-Proto` header, trusted only from the proxy. The upgrade happens only when it explicitly says `http`, so direct and local requests are never redirected.
+  - **Caddy detail:** the domain and `www` need their own `http://` site block. Combined with the catch-all, Caddy drops their host match and re-adds its own 308 redirects; found by running the Caddyfile locally.
+  - **ACME:** Caddy answers HTTP-01 challenges before routes, and TLS-ALPN-01 on 443 is unaffected. The local test could not exercise a live challenge.
+- **Scheme column (migration 6):** `https`, `http`, `gopher` or `gemini`. `proto` keeps the version, and HTTP/3 shows as `HTTP/3.0`. `lawn visitors` shows both as VIA, with onion traffic as `onion`.
+- **HTTP/3 (operator decision).** Caddy `protocols h1 h2 h3`, UDP 443 in the Vultr firewall and ufw, and quic-go's recommended 7.5 MB UDP buffer maxima. Checked locally: Caddy sends `alt-svc: h3=":443"`.
+- **Gopher and Gemini are served by `lawn` itself** (`internal/smallweb`), not a separate daemon.
+  - **Why in-process:** they share the maze generator, drip, limits, adaptive budgets, log writer, classifier and ASN lookup, so they behave and report exactly like HTTP.
+  - **Ports:** 70 and 1965, open in the Vultr firewall and ufw. `lawn.service` gains `CAP_NET_BIND_SERVICE` (bounding and ambient) for port 70, and nothing else.
+- **One maze in every format.** The renderer takes a `Format` (HTML, gemtext, gopher menu). Every format consumes the page's random sequence identically, so a path has the same title, links, anchors and text everywhere.
+  - **HTML unchanged:** HTML output was checked byte-identical against 68 pre-refactor page hashes, still at 0 allocations. The new formats don't allocate either.
+  - **Gopher:** menus wrap text at 70 columns in info lines.
+  - **Gemini:** a paragraph that would read as gemtext markup gets a leading space.
+- **Small-web requests are logged as HTTP-like fetches.** Method `GET`, and the path is the selector or URL path, so the existing robots, bait and violation reports count them with no changes.
+  - **Queries:** Gopher searches and Gemini queries are user input, so only their presence is kept (`/path?`), as with HTTP query values.
+  - **Not requests:** connections that send nothing, and failed TLS handshakes on 1965, are port scans and are not logged.
+- **A write failure means the client left.** On a bare connection there is no request context to signal a hang-up, so a failed drip write is treated as `client_gone`. That feeds the adaptive budget exactly as for HTTP.
+- **Gemini certificate:** self-signed ECDSA P-256 for `base_url`'s host, valid 20 years, created on first start in `gemini_cert_dir`, and never replaced automatically (a corrupt one is an error). Gemini clients pin certificates on first use, so replacing it would lock returning clients out. `make keys-backup` saves it with the onion key.
+- **Configuration:** `gopher_listen` (`:70`) and `gemini_listen` (`:1965`) default on, so existing operator-owned `config.yaml` files get them without editing. `"off"` disables either. `make run` and the load test use unprivileged ports or turn them off.
+- **Gemini proxy requests** (other URL schemes) get `53`; any host is served, like the port-80 catch-all. The homepage links both mirrors through `template.URL`, since html/template only allows http(s) and mailto links; the URLs come from config, never from input.

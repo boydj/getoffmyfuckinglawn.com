@@ -157,6 +157,9 @@ net.ipv4.ip_local_port_range = 10240 65535
 net.ipv4.tcp_fin_timeout = 15
 net.ipv4.tcp_tw_reuse = 1
 fs.file-max = 1048576
+# HTTP/3: quic-go (Caddy) wants ~7.5 MB UDP socket buffers.
+net.core.rmem_max = 7500000
+net.core.wmem_max = 7500000
 SYSCTL
 	sysctl -q -p /etc/sysctl.d/60-lawn.conf
 fi
@@ -216,15 +219,17 @@ systemctl enable --quiet --now apt-daily.timer apt-daily-upgrade.timer
 
 # ------------------------------------------------------------ host firewall
 # Vultr's Debian/Ubuntu images ship with ufw enabled and only SSH allowed, so
-# 80/443 would be dropped on the box even though the Vultr firewall group
-# opens them (ACME then fails with "Timeout during connect"). Open the web
-# ports and leave everything else as the image set it; SSH is still limited
-# to admin_cidrs by the Vultr firewall group. `ufw allow` is idempotent.
+# the public ports would be dropped on the box even though the Vultr firewall
+# group opens them (ACME then fails with "Timeout during connect"). Open the
+# same ports as infra/main.tf's public_ports and leave everything else as the
+# image set it; SSH is still limited to admin_cidrs by the Vultr firewall
+# group. `ufw allow` is idempotent.
+public_ports=(80/tcp 443/tcp 443/udp 70/tcp 1965/tcp)
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
-	for port in 80/tcp 443/tcp; do
+	for port in "${public_ports[@]}"; do
 		ufw allow "$port" >/dev/null
 	done
-	log "ufw is active: allowed 80/tcp and 443/tcp"
+	log "ufw is active: allowed ${public_ports[*]}"
 fi
 
 # ---------------------------------------------------------------------- tor

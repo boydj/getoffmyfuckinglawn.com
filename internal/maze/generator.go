@@ -49,6 +49,9 @@ type renderState struct {
 	num   [20]byte
 	idx   [3]byte
 	links bytes.Buffer
+	lp    bytes.Buffer // one link's path, before it is formatted
+	la    bytes.Buffer // one link's anchor text
+	para  bytes.Buffer // one paragraph of plain text (gemtext, gophermap)
 }
 
 // NewGenerator returns a Generator keyed by secret. A nil or empty chain
@@ -70,6 +73,8 @@ func NewGenerator(secret []byte, chain *Chain) *Generator {
 		}
 		st.rng = rand.New(&st.cha)
 		st.links.Grow(4096)
+		st.lp.Grow(128)
+		st.la.Grow(128)
 		return st
 	}
 	return g
@@ -121,10 +126,34 @@ const pageHeadEnd = `</title>
 
 const pageTail = "</body>\n</html>\n"
 
+// Format is the markup a maze page is rendered in. Every format renders
+// the same page for a path (title, links, anchors and text all come from
+// the same random sequence), so the maze is one maze whichever protocol a
+// crawler walks it with.
+type Format uint8
+
+const (
+	FormatHTML   Format = iota // text/html
+	FormatGemini               // text/gemini (gemtext)
+	FormatGopher               // a gopher menu (RFC 1436), text as info lines
+)
+
+// gopherWidth is the column gopher text is wrapped at (classic 70-column
+// clients).
+const gopherWidth = 70
+
 // Render writes the full HTML page for path into buf. The output depends
 // only on the secret, the chain and path: the same path always yields a
 // byte-identical page. Content is appended; buf is not reset.
 func (g *Generator) Render(buf *bytes.Buffer, path string) {
+	g.RenderAs(buf, path, FormatHTML, "", 0)
+}
+
+// RenderAs writes path's page in format f and returns the lead length: the
+// bytes through the link block, to be sent at once. host and port are the
+// server gopher menu links point at (unused by other formats). Like
+// Render it is deterministic and does not allocate in steady state.
+func (g *Generator) RenderAs(buf *bytes.Buffer, path string, f Format, host string, port int) int {
 	st := g.states.Get().(*renderState)
 	defer g.states.Put(st)
 
@@ -140,24 +169,44 @@ func (g *Generator) Render(buf *bytes.Buffer, path string) {
 	paras := minParagraphs + r.IntN(maxParagraphs-minParagraphs+1)
 	target := targetMin + r.IntN(targetMax-targetMin+1)
 
-	g.renderLinks(st, r, childDepth)
+	g.renderLinks(st, r, childDepth, f, host, port)
 
-	buf.WriteString(pageHead)
-	buf.Write(st.title)
-	buf.WriteString(pageHeadEnd)
-	buf.Write(st.title)
-	buf.WriteString("</h1>\n")
+	switch f {
+	case FormatGemini:
+		buf.WriteString("# ")
+		buf.Write(st.title)
+		buf.WriteString("\n\n")
+	case FormatGopher:
+		gopherInfo(buf, st.title)
+		gopherInfo(buf, nil)
+	default:
+		buf.WriteString(pageHead)
+		buf.Write(st.title)
+		buf.WriteString(pageHeadEnd)
+		buf.Write(st.title)
+		buf.WriteString("</h1>\n")
+	}
 	// Links first: a crawler reading the drip sees where to go next within
-	// the lead (sent at once, see LeadLen) instead of minutes into the body.
+	// the lead (sent at once) instead of minutes into the body.
 	buf.Write(st.links.Bytes())
+	lead := buf.Len() - start
 
-	reserved := len(pageTail)
+	tail, words := pageTail, wordSet{g.chain.html, g.chain.htmlEnd, g.chain.maxHTML}
+	capBytes := maxPageBytes
+	switch f {
+	case FormatGemini:
+		tail, words = "", wordSet{g.chain.plain, g.chain.plainEnd, g.chain.maxPlain}
+	case FormatGopher:
+		// Info-line framing adds about a fifth to the text.
+		tail, words = ".\r\n", wordSet{g.chain.plain, g.chain.plainEnd, g.chain.maxPlain}
+		capBytes = maxPageBytes * 3 / 2
+	}
+	reserved := len(tail)
 	textStart := buf.Len()
 	textEnd := start + target - reserved
 	// limit is the last byte text may reach, leaving room for "</p>\n".
-	limit := start + maxPageBytes - reserved - len("</p>\n")
-	c := g.chain
-	room := c.maxHTML + 8 // one forced word + ". " + "<p>"
+	limit := start + capBytes - reserved - len("</p>\n")
+	room := words.max + 8 // one forced word + ". " + "<p>"
 
 	midH2 := -1
 	if paras >= 5 && r.IntN(2) == 0 {
@@ -168,23 +217,115 @@ func (g *Generator) Render(buf *bytes.Buffer, path string) {
 			break // size cap wins; unreachable with sane corpora
 		}
 		if p == midH2 && buf.Len()+64+room < limit {
-			buf.WriteString("<h2>")
-			buf.WriteString(sectionHeadings[r.IntN(len(sectionHeadings))])
-			buf.WriteString("</h2>\n")
+			h := sectionHeadings[r.IntN(len(sectionHeadings))]
+			switch f {
+			case FormatGemini:
+				buf.WriteString("## ")
+				buf.WriteString(h)
+				buf.WriteString("\n\n")
+			case FormatGopher:
+				gopherInfoString(buf, h)
+				gopherInfo(buf, nil)
+			default:
+				buf.WriteString("<h2>")
+				buf.WriteString(h)
+				buf.WriteString("</h2>\n")
+			}
 		}
 		goal := textStart + (textEnd-textStart)*(p+1)/paras
-		buf.WriteString("<p>")
+		if f == FormatHTML {
+			buf.WriteString("<p>")
+			first := true
+			for {
+				g.sentence(buf, r, first, limit, words)
+				first = false
+				if n := buf.Len(); n >= goal || n+room > limit {
+					break
+				}
+			}
+			buf.WriteString("</p>\n")
+			continue
+		}
+		// Plain formats: build the paragraph, then frame it.
+		base := buf.Len()
+		para := &st.para
+		para.Reset()
 		first := true
 		for {
-			g.sentence(buf, r, first, limit)
+			g.sentence(para, r, first, limit-base, words)
 			first = false
-			if n := buf.Len(); n >= goal || n+room > limit {
+			if n := base + para.Len(); n >= goal || n+room > limit {
 				break
 			}
 		}
-		buf.WriteString("</p>\n")
+		if f == FormatGemini {
+			if gemtextSpecial(para.Bytes()) {
+				buf.WriteByte(' ') // keep it a text line, not a link/heading/list
+			}
+			buf.Write(para.Bytes())
+			buf.WriteString("\n\n")
+		} else {
+			gopherWrap(buf, para.Bytes())
+			gopherInfo(buf, nil)
+		}
 	}
-	buf.WriteString(pageTail)
+	buf.WriteString(tail)
+	return lead
+}
+
+// wordSet is the chain's word table for one output format.
+type wordSet struct {
+	words, ends []string
+	max         int
+}
+
+// gopherInfo writes one informational (type i) menu line. Selector, host
+// and port are the usual placeholders for lines that lead nowhere.
+func gopherInfo(buf *bytes.Buffer, text []byte) {
+	buf.WriteByte('i')
+	buf.Write(text)
+	buf.WriteString("\tfake\t(NULL)\t0\r\n")
+}
+
+func gopherInfoString(buf *bytes.Buffer, text string) {
+	buf.WriteByte('i')
+	buf.WriteString(text)
+	buf.WriteString("\tfake\t(NULL)\t0\r\n")
+}
+
+// gopherWrap writes text as info lines of at most gopherWidth bytes,
+// breaking at spaces.
+func gopherWrap(buf *bytes.Buffer, text []byte) {
+	for len(text) > 0 {
+		cut := len(text)
+		if cut > gopherWidth {
+			cut = bytes.LastIndexByte(text[:gopherWidth+1], ' ')
+			if cut <= 0 {
+				cut = gopherWidth
+			}
+		}
+		gopherInfo(buf, text[:cut])
+		text = bytes.TrimLeft(text[cut:], " ")
+	}
+}
+
+// gemtextSpecial reports whether a text line would be read as gemtext
+// markup (link, heading, list item, quote or preformat toggle).
+func gemtextSpecial(line []byte) bool {
+	if len(line) == 0 {
+		return false
+	}
+	switch line[0] {
+	case '#', '>':
+		return true
+	case '=':
+		return len(line) > 1 && line[1] == '>'
+	case '*':
+		return len(line) > 1 && line[1] == ' '
+	case '`':
+		return bytes.HasPrefix(line, []byte("```"))
+	}
+	return false
 }
 
 // navEnd closes the link block that follows the page heading.
@@ -200,17 +341,18 @@ func LeadLen(page []byte) int {
 	return i + len(navEnd)
 }
 
-// sentence writes one Markov sentence. The sentence is cut short (and
-// closed with a period) if the next word could push past limit.
-func (g *Generator) sentence(buf *bytes.Buffer, r *rand.Rand, first bool, limit int) {
+// sentence writes one Markov sentence using the word table w. The sentence
+// is cut short (and closed with a period) if the next word could push past
+// limit.
+func (g *Generator) sentence(buf *bytes.Buffer, r *rand.Rand, first bool, limit int, w wordSet) {
 	c := g.chain
 	s := c.starts[r.IntN(len(c.starts))]
 	for n := 1; ; n++ {
-		w := c.emit[s]
+		word := c.emit[s]
 		succ := c.next[c.off[s]:c.off[s+1]]
-		done := c.isEnd[w] && n >= minSentenceWords
-		force := !done && (n >= maxSentenceWords || len(succ) == 0 || buf.Len()+c.maxHTML+4 > limit)
-		if force && c.htmlEnd[w] == "" {
+		done := c.isEnd[word] && n >= minSentenceWords
+		force := !done && (n >= maxSentenceWords || len(succ) == 0 || buf.Len()+w.max+4 > limit)
+		if force && w.ends[word] == "" {
 			buf.WriteByte('.')
 			return
 		}
@@ -219,11 +361,11 @@ func (g *Generator) sentence(buf *bytes.Buffer, r *rand.Rand, first bool, limit 
 		}
 		first = false
 		if force {
-			buf.WriteString(c.htmlEnd[w])
+			buf.WriteString(w.ends[word])
 			buf.WriteByte('.')
 			return
 		}
-		buf.WriteString(c.html[w])
+		buf.WriteString(w.words[word])
 		if done {
 			return
 		}
@@ -231,33 +373,76 @@ func (g *Generator) sentence(buf *bytes.Buffer, r *rand.Rand, first bool, limit 
 	}
 }
 
-func (g *Generator) renderLinks(st *renderState, r *rand.Rand, childDepth int) {
+func (g *Generator) renderLinks(st *renderState, r *rand.Rand, childDepth int, f Format, host string, port int) {
 	lb := &st.links
 	lb.Reset()
-	lb.WriteString("<nav>\n<h2>")
-	lb.WriteString(linkHeadings[r.IntN(len(linkHeadings))])
-	lb.WriteString("</h2>\n<ul>\n")
+	heading := linkHeadings[r.IntN(len(linkHeadings))]
+	switch f {
+	case FormatGemini:
+		lb.WriteString("## ")
+		lb.WriteString(heading)
+		lb.WriteByte('\n')
+	case FormatGopher:
+		gopherInfoString(lb, heading)
+	default:
+		lb.WriteString("<nav>\n<h2>")
+		lb.WriteString(heading)
+		lb.WriteString("</h2>\n<ul>\n")
+	}
 	n := minLinks + r.IntN(maxLinks-minLinks+1)
 	idx := st.idx[:]
-	parent := pageID(st) // reuses st.sum; the page seed was consumed in Render
+	parent := pageID(st) // reuses st.sum; the page seed was consumed in RenderAs
 	for i := range n {
-		lb.WriteString(`<li><a href="/lawn/`)
+		lp, la := &st.lp, &st.la
+		lp.Reset()
+		lp.WriteString("/lawn/")
 		if r.IntN(4) == 0 {
 			for range 1 + r.IntN(3) {
-				g.writeSegment(lb, st, r)
-				lb.WriteByte('/')
+				g.writeSegment(lp, st, r)
+				lp.WriteByte('/')
 			}
 		}
 		idx[0] = 0
 		binary.BigEndian.PutUint16(idx[1:], uint16(i))
 		st.tok = appendChildToken(st.tok[:0], childDepth, st.macSum(idx), parent)
-		lb.Write(st.tok)
-		lb.WriteString(`">`)
-		g.writeAnchor(lb, st, r)
-		lb.WriteString("</a></li>\n")
+		lp.Write(st.tok)
+		la.Reset()
+		g.writeAnchor(la, st, r)
+		switch f {
+		case FormatGemini:
+			lb.WriteString("=> ")
+			lb.Write(lp.Bytes())
+			lb.WriteByte(' ')
+			lb.Write(la.Bytes())
+			lb.WriteByte('\n')
+		case FormatGopher:
+			lb.WriteByte('1')
+			lb.Write(la.Bytes())
+			lb.WriteByte('\t')
+			lb.Write(lp.Bytes())
+			lb.WriteByte('\t')
+			lb.WriteString(host)
+			lb.WriteByte('\t')
+			// st.num is also writeSegment's scratch, so format the port last.
+			lb.Write(strconv.AppendInt(st.num[:0], int64(port), 10))
+			lb.WriteString("\r\n")
+		default:
+			lb.WriteString(`<li><a href="`)
+			lb.Write(lp.Bytes())
+			lb.WriteString(`">`)
+			lb.Write(la.Bytes())
+			lb.WriteString("</a></li>\n")
+		}
 	}
-	lb.WriteString("</ul>\n")
-	lb.WriteString(navEnd)
+	switch f {
+	case FormatGemini:
+		lb.WriteByte('\n')
+	case FormatGopher:
+		gopherInfo(lb, nil)
+	default:
+		lb.WriteString("</ul>\n")
+		lb.WriteString(navEnd)
+	}
 }
 
 func (g *Generator) writeSegment(lb *bytes.Buffer, st *renderState, r *rand.Rand) {

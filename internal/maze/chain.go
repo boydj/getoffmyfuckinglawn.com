@@ -28,6 +28,10 @@ type Chain struct {
 	isEnd   []bool   // word id -> word ends a sentence
 	maxHTML int      // longest entry in html
 
+	plain    []string // word id -> the word as is (gemtext, gophermap)
+	plainEnd []string // plain word with trailing , ; : - trimmed
+	maxPlain int      // longest entry in plain
+
 	emit   []int32 // state id -> word emitted when entering the state (w2)
 	off    []int32 // state id -> start index into next; len = states+1
 	next   []int32 // successor state ids
@@ -254,16 +258,21 @@ func isVocab(w string) bool {
 
 func (b *builder) build() *Chain {
 	c := &Chain{
-		html:    make([]string, len(b.words)),
-		htmlEnd: make([]string, len(b.words)),
-		isEnd:   make([]bool, len(b.words)),
-		emit:    b.emit,
+		html:     make([]string, len(b.words)),
+		htmlEnd:  make([]string, len(b.words)),
+		plain:    make([]string, len(b.words)),
+		plainEnd: make([]string, len(b.words)),
+		isEnd:    make([]bool, len(b.words)),
+		emit:     b.emit,
 	}
 	for i, w := range b.words {
 		c.html[i] = html.EscapeString(w)
 		c.htmlEnd[i] = html.EscapeString(strings.TrimRight(w, ",;:-—"))
 		c.isEnd[i] = endsSentence(w)
 		c.maxHTML = max(c.maxHTML, len(c.html[i]))
+		c.plain[i] = w
+		c.plainEnd[i] = strings.TrimRight(w, ",;:-—")
+		c.maxPlain = max(c.maxPlain, len(w))
 		if b.nounish[i] >= 2 && isVocab(w) {
 			c.vocab = append(c.vocab, w)
 		}

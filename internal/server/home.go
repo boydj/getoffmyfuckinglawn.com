@@ -13,6 +13,11 @@ type HomeData struct {
 	Bait      []string // hidden /lawn/ entry links
 	BaseURL   string
 	Onion     string // onion mirror hostname, "" = none
+	// gopher:// and gemini:// URLs of the small-web mirrors ("" = none).
+	// template.URL because html/template only lets http(s) and mailto
+	// through as links; these come from our own config, never from input.
+	Gopher template.URL
+	Gemini template.URL
 }
 
 // RenderHome renders the static homepage once at startup. It parses every

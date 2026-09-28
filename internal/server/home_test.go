@@ -31,3 +31,23 @@ func TestRenderHome(t *testing.T) {
 		t.Errorf("homepage is %d bytes, want < 50KB", len(b))
 	}
 }
+
+func TestRenderHomeMirrors(t *testing.T) {
+	b, err := RenderHome(web.Templates(""), HomeData{RobotsTxt: RobotsTxt, Gopher: "gopher://lawn.example/", Gemini: "gemini://lawn.example/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`<a href="gopher://lawn.example/"><code>gopher://lawn.example/</code></a> and <a href="gemini://lawn.example/">`,
+		"Gopher or Gemini"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("homepage missing %q", want)
+		}
+	}
+	if strings.Contains(string(b), "ZgotmplZ") {
+		t.Error("html/template refused the small-web links")
+	}
+	b, _ = RenderHome(web.Templates(""), HomeData{RobotsTxt: RobotsTxt})
+	if strings.Contains(string(b), "small web") {
+		t.Error("no mirrors configured: nothing to advertise")
+	}
+}

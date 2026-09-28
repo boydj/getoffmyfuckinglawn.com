@@ -39,8 +39,9 @@ TasksMax=4096
 # IP-range lists).
 UMask=0027
 NoNewPrivileges=yes
-CapabilityBoundingSet=
-AmbientCapabilities=
+# Only the right to bind Gopher's port 70 (Gemini's 1965 needs nothing).
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 ProtectSystem=strict
 ReadWritePaths=/var/lib/lawn
 ProtectHome=yes

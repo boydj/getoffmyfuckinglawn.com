@@ -650,3 +650,56 @@ func TestOnionVisitors(t *testing.T) {
 		t.Errorf("no onion configured, got %q", got)
 	}
 }
+
+func (r *rig) doProto(path, xff, proto string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("GET", path, nil)
+	req.RemoteAddr = "127.0.0.1:5555"
+	req.Header.Set("X-Forwarded-For", xff)
+	if proto != "" {
+		req.Header.Set("X-Forwarded-Proto", proto)
+	}
+	req.Header.Set("User-Agent", "PlainBot/1.0")
+	w := httptest.NewRecorder()
+	r.srv.ServeHTTP(w, req)
+	return w
+}
+
+func TestPlainHTTP(t *testing.T) {
+	r := newRig(t)
+	last := func() logstore.Request { return r.log.reqs[len(r.log.reqs)-1] }
+
+	w := r.doProto("/shame/x?a=1", "203.0.113.7", "http")
+	if w.Code != http.StatusMovedPermanently || w.Header().Get("Location") != "https://example.test/shame/x?a=1" {
+		t.Fatalf("plain http page: %d %q", w.Code, w.Header().Get("Location"))
+	}
+	if rec := last(); rec.Scheme != "http" || rec.Status != 301 || rec.Path != "/shame/x?a" {
+		t.Errorf("redirect logged as %+v", rec)
+	}
+	// The rule and the maze are served as over HTTPS.
+	if w := r.doProto("/robots.txt", "203.0.113.7", "http"); w.Code != 200 || !strings.Contains(w.Body.String(), "Disallow: /lawn/") {
+		t.Errorf("robots over http: %d", w.Code)
+	}
+	if w := r.doProto("/lawn/abc", "203.0.113.7", "http"); w.Code != 200 || !last().IsViolation || last().Scheme != "http" {
+		t.Errorf("maze over http: %d %+v", w.Code, last())
+	}
+	if len(r.log.robots) != 1 {
+		t.Errorf("robots fetch over http not counted: %d", len(r.log.robots))
+	}
+	// HTTPS is untouched and logged as such.
+	if w := r.doProto("/", "203.0.113.7", "https"); w.Code != 200 || last().Scheme != "https" {
+		t.Errorf("https home: %d %q", w.Code, last().Scheme)
+	}
+	// The onion mirror is plain HTTP by design: never redirected.
+	if w := r.doProto("/", "fc00:dead:beef:4dad::1", "http"); w.Code != 200 || last().Scheme != "http" {
+		t.Errorf("onion home: %d", w.Code)
+	}
+	// A client-supplied X-Forwarded-Proto is ignored without the proxy.
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "198.51.100.1:4000"
+	req.Header.Set("X-Forwarded-Proto", "http")
+	w = httptest.NewRecorder()
+	r.srv.ServeHTTP(w, req)
+	if w.Code != 200 || last().Scheme != "http" {
+		t.Errorf("direct request: %d %q", w.Code, last().Scheme)
+	}
+}

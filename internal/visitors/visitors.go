@@ -27,6 +27,7 @@ type Options struct {
 	ASN       string // "AS64500" or "64500"
 	UA        string // case-insensitive substring
 	Path      string // path prefix, e.g. /lawn/ or /.env
+	Scheme    string // https, http, gopher or gemini
 	LawnOnly  bool   // only /lawn/ requests
 	Operators bool   // include the operator's own networks (marked *)
 	Exclude   []netip.Prefix
@@ -44,6 +45,7 @@ type Visit struct {
 	Depth             int64 // -1 outside /lawn/
 	Ended, Referer    string
 	Bytes             int64
+	Scheme, Proto     string
 	Operator          bool
 }
 
@@ -108,9 +110,14 @@ func List(ctx context.Context, o Options) (*Result, error) {
 	if o.LawnOnly {
 		where = append(where, "is_violation = 1")
 	}
+	if o.Scheme != "" {
+		where = append(where, "scheme = ?")
+		args = append(args, strings.ToLower(o.Scheme))
+	}
 	q := `SELECT ts_start, COALESCE(ts_end, 0), ip, COALESCE(country, ''), COALESCE(asn, 0), COALESCE(asn_org, ''),
   COALESCE(user_agent, ''), COALESCE(method, ''), path, COALESCE(status, 0), COALESCE(depth, -1),
-  COALESCE(end_reason, ''), COALESCE(referer, ''), COALESCE(bytes_sent, 0)
+  COALESCE(end_reason, ''), COALESCE(referer, ''), COALESCE(bytes_sent, 0),
+  COALESCE(scheme, ''), COALESCE(proto, '')
 FROM requests`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -129,7 +136,7 @@ FROM requests`
 	for rows.Next() {
 		var v Visit
 		if err := rows.Scan(&v.Start, &v.End, &v.IP, &v.Country, &v.ASN, &v.ASNOrg, &v.UserAgent, &v.Method,
-			&v.Path, &v.Status, &v.Depth, &v.Ended, &v.Referer, &v.Bytes); err != nil {
+			&v.Path, &v.Status, &v.Depth, &v.Ended, &v.Referer, &v.Bytes, &v.Scheme, &v.Proto); err != nil {
 			return nil, fmt.Errorf("visitors: %w", err)
 		}
 		if inNet.IsValid() {
@@ -167,15 +174,15 @@ func Write(w io.Writer, r *Result) {
 		fmt.Fprintln(w, "No matching visits.")
 	} else {
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "TIME (UTC)\tIP\tCC\tNETWORK\tREQUEST\tSTATUS\tDEPTH\tENDED\tSECS\tBYTES\tREFERER\tUSER AGENT")
+		fmt.Fprintln(tw, "TIME (UTC)\tIP\tCC\tNETWORK\tVIA\tREQUEST\tSTATUS\tDEPTH\tENDED\tSECS\tBYTES\tREFERER\tUSER AGENT")
 		for _, v := range r.Visits {
 			ip := v.IP
 			if v.Operator {
 				ip = "*" + ip
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\n",
 				time.UnixMilli(v.Start).UTC().Format("01-02 15:04:05"), ip, orDash(v.Country),
-				clip(network(v.ASN, v.ASNOrg), 28), clip(v.Method+" "+v.Path, 60), status(v.Status),
+				clip(network(v.ASN, v.ASNOrg), 28), via(v), clip(v.Method+" "+v.Path, 60), status(v.Status),
 				depth(v.Depth), orDash(v.Ended), secs(v.Start, v.End), v.Bytes,
 				clip(orDash(v.Referer), 50), clip(orDash(v.UserAgent), 90))
 		}
@@ -193,6 +200,31 @@ func Write(w io.Writer, r *Result) {
 		fmt.Fprintf(w, " %d from your own networks (exclude_cidrs) hidden; --operators shows them.", r.Hidden)
 	}
 	fmt.Fprintln(w)
+}
+
+// via is how a visit arrived: "https h2", "https h3", "http 1.1", "onion",
+// "gopher", "gemini"; "-" for rows logged before schemes were recorded.
+func via(v Visit) string {
+	if v.ASN == int64(logstore.OnionASN) {
+		return "onion"
+	}
+	switch v.Scheme {
+	case "gopher", "gemini":
+		return v.Scheme
+	case "":
+		if v.Proto == "" {
+			return "-"
+		}
+		return strings.TrimPrefix(v.Proto, "HTTP/")
+	}
+	ver := strings.TrimPrefix(v.Proto, "HTTP/")
+	switch ver {
+	case "2.0":
+		ver = "h2"
+	case "3.0":
+		ver = "h3"
+	}
+	return strings.TrimSpace(v.Scheme + " " + ver)
 }
 
 func network(asn int64, org string) string {

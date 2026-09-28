@@ -47,6 +47,7 @@ type Client struct {
 	HeaderNames          string
 	Proto, TLS           string
 	Country              string // "" = unknown or rolled-up only
+	Schemes              string // comma-separated: https, http, gopher, gemini
 	Frontier
 }
 
@@ -85,6 +86,7 @@ type Bot struct {
 	Protos      map[string]int64
 	TLS         map[string]int64
 	Countries   map[string]int64 // country code -> requests
+	Schemes     map[string]int   // scheme -> clients that used it
 	Frontier
 	Clients []*Client
 }
@@ -127,6 +129,15 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 	groups := map[string]*Bot{}
 	for _, c := range clients {
 		token, named := Token(c.UA)
+		if c.UA == "" {
+			// Gopher and Gemini have no user agent. Their clients are grouped
+			// by protocol and, like browsers, need a bot signal to be listed:
+			// people use these protocols too.
+			switch c.Schemes {
+			case "gopher", "gemini":
+				token, named = "("+c.Schemes+" client)", false
+			}
+		}
 		reasons := signals(c, named)
 		if len(reasons) == 0 && !opt.All {
 			continue
@@ -141,7 +152,7 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 		if b == nil {
 			b = &Bot{Token: key, Statuses: map[string]int{}, IPs: map[string]bool{}, ASNs: map[string]int64{},
 				PTRDomains: map[string]int64{}, Reasons: map[string]bool{}, Protos: map[string]int64{}, TLS: map[string]int64{},
-				Countries: map[string]int64{},
+				Countries: map[string]int64{}, Schemes: map[string]int{},
 				FirstSeen: c.First}
 			groups[key] = b
 		}
@@ -228,6 +239,11 @@ func (b *Bot) add(c *Client, reasons []string, crawlers []attrib.Crawler) {
 	if c.Country != "" {
 		b.Countries[c.Country] += c.Requests
 	}
+	for _, sc := range strings.Split(c.Schemes, ",") {
+		if sc != "" {
+			b.Schemes[sc]++
+		}
+	}
 	if b.SampleUA == "" || (b.Contact == "" && Contact(c.UA) != "") {
 		b.SampleUA = c.UA
 		b.Contact = Contact(c.UA)
@@ -269,7 +285,7 @@ func asnLabel(asn int64, org string) string {
 func scanClients(ctx context.Context, db *sql.DB, from int64, withDaily bool, skip *logstore.IPSet) ([]*Client, error) {
 	q := `
 SELECT r.ip, r.ua, r.asn, r.asn_org, r.requests, r.robots, r.bait, r.violations, r.max_depth, r.first, r.last,
-       r.captured, r.no_al, r.header_names, r.proto, r.tls, r.country,
+       r.captured, r.no_al, r.header_names, r.proto, r.tls, r.country, r.schemes,
        COALESCE(i.status, ''), COALESCE(i.claimed_org, ''), COALESCE(h.ptr, '')
 FROM (
   SELECT ip, COALESCE(user_agent, '') AS ua, COALESCE(MAX(asn), 0) AS asn, COALESCE(MAX(asn_org), '') AS asn_org,
@@ -283,7 +299,8 @@ FROM (
          SUM(header_names IS NOT NULL AND accept_language IS NULL) AS no_al,
          COALESCE(MAX(header_names), '') AS header_names,
          COALESCE(MAX(proto), '') AS proto, COALESCE(MAX(tls), '') AS tls,
-         COALESCE(MAX(country), '') AS country
+         COALESCE(MAX(country), '') AS country,
+         COALESCE(GROUP_CONCAT(DISTINCT scheme), '') AS schemes
   FROM requests WHERE ts_start >= ?
   GROUP BY ip, COALESCE(user_agent, '')
 ) r
@@ -298,7 +315,7 @@ LEFT JOIN hosts h ON h.ip = r.ip`
 	for rows.Next() {
 		c := &Client{}
 		if err := rows.Scan(&c.IP, &c.UA, &c.ASN, &c.ASNOrg, &c.Requests, &c.Robots, &c.Bait, &c.Violations, &c.MaxDepth,
-			&c.First, &c.Last, &c.Captured, &c.NoAcceptLg, &c.HeaderNames, &c.Proto, &c.TLS, &c.Country,
+			&c.First, &c.Last, &c.Captured, &c.NoAcceptLg, &c.HeaderNames, &c.Proto, &c.TLS, &c.Country, &c.Schemes,
 			&c.Status, &c.ClaimedOrg, &c.PTR); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("bots: scan: %w", err)

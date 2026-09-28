@@ -34,6 +34,9 @@ func fixture(t *testing.T) *logstore.Store {
 			Path: "/.env", Depth: -1, Status: 404},
 		{TsStart: at(48 * time.Hour), IP: "198.51.100.10", ASN: 64501, UserAgent: "OldBot", Method: "GET", Path: "/", Depth: -1, Status: 200},
 	}
+	rows[1].Scheme, rows[1].Proto = "https", "HTTP/2.0"
+	rows[2].Scheme, rows[2].Proto = "https", "HTTP/3.0"
+	rows[3].Scheme, rows[3].Proto = "gopher", "gopher"
 	if err := s.InsertRequests(context.Background(), rows); err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +80,7 @@ func TestList(t *testing.T) {
 		{"path prefix", Options{DB: db, Path: "/.e"}, "/.env"},
 		{"lawn only", Options{DB: db, LawnOnly: true}, "/lawn/abc"},
 		{"limit", Options{DB: db, Limit: 2}, "/.env /shame/"},
+		{"scheme", Options{DB: db, Scheme: "GOPHER"}, "/.env"},
 	} {
 		if got := paths(list(t, c.o)); got != c.want {
 			t.Errorf("%s: got %q want %q", c.name, got, c.want)
@@ -114,7 +118,7 @@ func TestWrite(t *testing.T) {
 	Write(&out, list(t, Options{DB: s.DB(), IP: "198.51.100.9"}))
 	txt := out.String()
 	for _, want := range []string{"TIME (UTC)", "09-28 10:00:00", "NL", "AS64501 HOSTING-AS", "GET /lawn/abc",
-		"client_gone", "4.5", "1519", "https://lawn.example/", "GreedyBot/1.0", "2 visits, oldest first."} {
+		"client_gone", "4.5", "1519", "https://lawn.example/", "GreedyBot/1.0", "2 visits, oldest first.", "https h2"} {
 		if !strings.Contains(txt, want) {
 			t.Errorf("output missing %q:\n%s", want, txt)
 		}
@@ -123,5 +127,24 @@ func TestWrite(t *testing.T) {
 	Write(&out, &Result{})
 	if !strings.Contains(out.String(), "No matching visits.") {
 		t.Errorf("empty: %q", out.String())
+	}
+}
+
+func TestVia(t *testing.T) {
+	for _, c := range []struct {
+		v    Visit
+		want string
+	}{
+		{Visit{Scheme: "https", Proto: "HTTP/2.0"}, "https h2"},
+		{Visit{Scheme: "https", Proto: "HTTP/3.0"}, "https h3"},
+		{Visit{Scheme: "http", Proto: "HTTP/1.1"}, "http 1.1"},
+		{Visit{Scheme: "gemini", Proto: "gemini"}, "gemini"},
+		{Visit{Scheme: "http", Proto: "HTTP/1.1", ASN: int64(logstore.OnionASN)}, "onion"},
+		{Visit{Proto: "HTTP/1.1"}, "1.1"},
+		{Visit{}, "-"},
+	} {
+		if got := via(c.v); got != c.want {
+			t.Errorf("%+v: %q want %q", c.v, got, c.want)
+		}
 	}
 }

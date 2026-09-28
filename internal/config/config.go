@@ -4,9 +4,12 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +79,9 @@ type Log struct {
 type Config struct {
 	Listen          string    `yaml:"listen"`
 	AdminListen     string    `yaml:"admin_listen"`
+	GopherListen    string    `yaml:"gopher_listen"`   // "" or "off" = disabled
+	GeminiListen    string    `yaml:"gemini_listen"`   // "" or "off" = disabled
+	GeminiCertDir   string    `yaml:"gemini_cert_dir"` // self-signed cert, created on first start
 	BaseURL         string    `yaml:"base_url"`
 	OnionAddress    string    `yaml:"onion_address"`
 	TrustedProxies  []string  `yaml:"trusted_proxies"`
@@ -110,6 +116,9 @@ func Default() Config {
 	return Config{
 		Listen:          "127.0.0.1:8080",
 		AdminListen:     "127.0.0.1:9090",
+		GopherListen:    ":70",
+		GeminiListen:    ":1965",
+		GeminiCertDir:   "/var/lib/lawn/gemini",
 		BaseURL:         "https://getoffmyfuckinglawn.com",
 		TrustedProxies:  []string{"127.0.0.1/32"},
 		ServerSecretEnv: "LAWN_SECRET",
@@ -143,6 +152,9 @@ var envOverrides = []struct {
 }{
 	{"LAWN_LISTEN", func(c *Config) *string { return &c.Listen }},
 	{"LAWN_ADMIN_LISTEN", func(c *Config) *string { return &c.AdminListen }},
+	{"LAWN_GOPHER_LISTEN", func(c *Config) *string { return &c.GopherListen }},
+	{"LAWN_GEMINI_LISTEN", func(c *Config) *string { return &c.GeminiListen }},
+	{"LAWN_GEMINI_CERT_DIR", func(c *Config) *string { return &c.GeminiCertDir }},
 	{"LAWN_BASE_URL", func(c *Config) *string { return &c.BaseURL }},
 	{"LAWN_ONION_ADDRESS", func(c *Config) *string { return &c.OnionAddress }},
 	{"LAWN_DB_PATH", func(c *Config) *string { return &c.DBPath }},
@@ -225,6 +237,27 @@ func (c *Config) Validate() error {
 	if c.Exclude, err = parsePrefixes("exclude_cidrs", c.ExcludeCIDRs); err != nil {
 		return err
 	}
+	for _, l := range []*string{&c.GopherListen, &c.GeminiListen} {
+		if *l == "off" {
+			*l = ""
+		}
+	}
+	if c.GopherListen != "" {
+		if _, err := c.GopherPort(); err != nil {
+			return err
+		}
+	}
+	if c.GeminiListen != "" {
+		if _, _, err := net.SplitHostPort(c.GeminiListen); err != nil {
+			return fmt.Errorf("config: gemini_listen %q: %w", c.GeminiListen, err)
+		}
+		if c.GeminiCertDir == "" {
+			return errors.New("config: gemini_cert_dir is required when gemini_listen is set")
+		}
+	}
+	if u, err := url.Parse(c.BaseURL); err != nil || u.Hostname() == "" {
+		return fmt.Errorf("config: base_url %q must be an absolute URL", c.BaseURL)
+	}
 	if c.OnionAddress != "" && !onionRE.MatchString(c.OnionAddress) {
 		return fmt.Errorf("config: onion_address %q is not a v3 onion hostname (56 base32 characters + .onion)", c.OnionAddress)
 	}
@@ -265,6 +298,25 @@ func (c *Config) Validate() error {
 		errs = append(errs, errors.New("attrib.queue_size and attrib.workers must be > 0"))
 	}
 	return errors.Join(errs...)
+}
+
+// Host is the site's hostname, from base_url (e.g. getoffmyfuckinglawn.com).
+func (c *Config) Host() string {
+	u, _ := url.Parse(c.BaseURL)
+	return u.Hostname()
+}
+
+// GopherPort is the port gopher menus point at: gopher_listen's port.
+func (c *Config) GopherPort() (int, error) {
+	_, p, err := net.SplitHostPort(c.GopherListen)
+	if err != nil {
+		return 0, fmt.Errorf("config: gopher_listen %q: %w", c.GopherListen, err)
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil || n < 0 || n > 65535 { // 0: any free port (tests)
+		return 0, fmt.Errorf("config: gopher_listen %q: bad port", c.GopherListen)
+	}
+	return n, nil
 }
 
 // RequireSecret errors if no server secret is configured. Only commands that

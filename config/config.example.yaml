@@ -10,6 +10,14 @@
 listen: "127.0.0.1:8080"
 # Admin listener for /metrics (Prometheus). Keep it on localhost.
 admin_listen: "127.0.0.1:9090"
+# Small-web mirrors of the site, served by lawn itself (not Caddy): Gopher
+# (RFC 1436) and Gemini (TLS with a self-signed certificate kept in
+# gemini_cert_dir, as Gemini clients expect). Same rule, same maze. Ports
+# below 1024 need CAP_NET_BIND_SERVICE (granted in lawn.service). "off"
+# disables one.
+gopher_listen: ":70"
+gemini_listen: ":1965"
+gemini_cert_dir: "/var/lib/lawn/gemini"
 # Absolute site URL, used for sitemap.xml and feed links.
 base_url: "https://getoffmyfuckinglawn.com"
 # The Tor onion mirror's hostname (xxx.onion). Deploy writes it to

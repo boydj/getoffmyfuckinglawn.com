@@ -120,3 +120,38 @@ func TestInvalid(t *testing.T) {
 		t.Fatal("expected error for chunk_bytes 0")
 	}
 }
+
+func TestSmallWebListeners(t *testing.T) {
+	c := Default()
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if c.GopherListen != ":70" || c.GeminiListen != ":1965" || c.Host() != "getoffmyfuckinglawn.com" {
+		t.Fatalf("defaults: %q %q %q", c.GopherListen, c.GeminiListen, c.Host())
+	}
+	if p, err := c.GopherPort(); err != nil || p != 70 {
+		t.Fatalf("gopher port %d %v", p, err)
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(p, []byte("gopher_listen: \"off\"\ngemini_listen: \"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(p, env(nil))
+	if err != nil || c.GopherListen != "" || c.GeminiListen != "" {
+		t.Fatalf("off: %q %q %v", c.GopherListen, c.GeminiListen, err)
+	}
+	c, err = Load("", env(map[string]string{"LAWN_GOPHER_LISTEN": "127.0.0.1:7070", "LAWN_GEMINI_LISTEN": "off"}))
+	if err != nil || c.GopherListen != "127.0.0.1:7070" || c.GeminiListen != "" {
+		t.Fatalf("env: %q %q %v", c.GopherListen, c.GeminiListen, err)
+	}
+	for _, bad := range []string{"gopher_listen: \"70\"", "gopher_listen: \":notaport\"", "gemini_listen: \"nohostport\"",
+		"gemini_cert_dir: \"\"", "base_url: \"not a url\""} {
+		if err := os.WriteFile(p, []byte(bad+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(p, env(nil)); err == nil {
+			t.Errorf("expected error for %s", bad)
+		}
+	}
+}

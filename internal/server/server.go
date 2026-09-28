@@ -145,6 +145,10 @@ func (s *Server) SetASN(l ASNLookup) {
 	s.asn.Store(b)
 }
 
+// LookupASN returns the network and country of a (the onion pseudo-network
+// for Tor circuits), as logged for HTTP requests. Safe for concurrent use.
+func (s *Server) LookupASN(a netip.Addr) (asn uint32, org, cc string) { return s.lookupASN(a) }
+
 func (s *Server) lookupASN(a netip.Addr) (uint32, string, string) {
 	b := s.asn.Load()
 	if logstore.IsOnion(a) {
@@ -197,6 +201,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		HeaderNames:    headerNames(r.Header, viaProxy),
 		Proto:          r.Proto,
 	}
+	rec.Scheme = requestScheme(r, viaProxy)
 	if viaProxy {
 		// Caddy sets these (overwriting any client value); see deploy/Caddyfile.
 		if p := r.Header.Get("X-Lawn-Client-Proto"); p != "" {
@@ -211,8 +216,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
 	onion := asn == logstore.OnionASN
+	// Plain HTTP from the internet (Caddy's port-80 site): the rule and the
+	// maze are served as over HTTPS, so http-only crawlers are measured and
+	// trapped too; everything else moves to HTTPS. The onion mirror is plain
+	// HTTP by design and is never redirected.
+	upgrade := viaProxy && r.Header.Get("X-Forwarded-Proto") == "http" && !onion &&
+		!maze.IsMazePath(path) && path != "/robots.txt" && path != "/healthz"
 
 	switch {
+	case upgrade:
+		status = http.StatusMovedPermanently
+		h.Set("Location", s.d.BaseURL+r.URL.RequestURI())
+		sent = s.writeSmall(w, status, "text/plain; charset=utf-8", []byte("moved to https\n"), r)
 	case r.Method != http.MethodGet && r.Method != http.MethodHead:
 		h.Set("Allow", "GET, HEAD")
 		status = http.StatusMethodNotAllowed
@@ -276,6 +291,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !s.d.Logger.LogRequest(rec) {
 		s.Metrics.LogDropped.Add(1)
 	}
+}
+
+// requestScheme is how the client reached us: Caddy's X-Forwarded-Proto
+// when proxied (it overwrites any client value), else the connection.
+func requestScheme(r *http.Request, viaProxy bool) string {
+	if viaProxy {
+		switch p := r.Header.Get("X-Forwarded-Proto"); p {
+		case "http", "https":
+			return p
+		}
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
 }
 
 // advertiseOnion sets Onion-Location on clearnet HTML pages, so Tor Browser

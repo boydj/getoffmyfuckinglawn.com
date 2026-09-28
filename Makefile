@@ -119,10 +119,13 @@ patch-status: require-host ## Host patch state: pending updates, kernel, reboot 
 onion-address: require-host ## Print the Tor onion mirror's address
 	ssh $(SSH_OPTS) $(DEPLOY_USER)@$(DEPLOY_HOST) $(SUDO) cat /var/lib/tor/lawn/hostname
 
-onion-backup: require-host ## Copy the onion service's keys off the host to onion-keys.tar.gz (secret; gitignored)
-	@umask 077; ssh $(SSH_OPTS) $(DEPLOY_USER)@$(DEPLOY_HOST) $(SUDO) tar -C /var/lib/tor -czf - lawn >onion-keys.tar.gz.tmp
-	@mv -f onion-keys.tar.gz.tmp onion-keys.tar.gz
-	@echo "wrote onion-keys.tar.gz: the onion address's private key. Keep it somewhere safe and never commit it."
+keys-backup: require-host ## Copy the onion key and Gemini certificate off the host to lawn-keys.tar.gz (secret; gitignored)
+	@umask 077; ssh $(SSH_OPTS) $(DEPLOY_USER)@$(DEPLOY_HOST) \
+		"cd / && $(SUDO) tar -czf - \$$(for d in var/lib/tor/lawn var/lib/lawn/gemini; do [ -d \$$d ] && echo \$$d; done)" >lawn-keys.tar.gz.tmp
+	@mv -f lawn-keys.tar.gz.tmp lawn-keys.tar.gz
+	@echo "wrote lawn-keys.tar.gz: the onion address's private key and the Gemini certificate. Keep it safe; never commit it."
+
+onion-backup: keys-backup ## Alias for keys-backup
 
 ## ---------------------------------------------------------------- Dev
 
@@ -141,6 +144,9 @@ run: ## Serve locally on 127.0.0.1:8080 with throwaway state in data/dev
 	LAWN_CORPUS_DIR=corpus \
 	LAWN_CRAWLERS_FILE=config/crawlers.yaml \
 	LAWN_TEMPLATES_DIR=web/templates \
+	LAWN_GOPHER_LISTEN=127.0.0.1:7070 \
+	LAWN_GEMINI_LISTEN=127.0.0.1:1965 \
+	LAWN_GEMINI_CERT_DIR=$(DEV_DIR)/gemini \
 		$(GO) run ./cmd/lawn serve -config config/config.example.yaml
 
 clean: ## Remove build output

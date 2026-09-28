@@ -16,10 +16,20 @@ locals {
     v6 = { subnet = "::", subnet_size = 0 }
   }
 
+  # Public services, open to everyone. The original TCP web ports keep their
+  # "v4-80"-style keys so upgrading adds rules instead of replacing them.
+  public_ports = [
+    { key = "80", protocol = "tcp", port = "80" },       # HTTP (logged, then mostly redirected)
+    { key = "443", protocol = "tcp", port = "443" },     # HTTPS
+    { key = "udp-443", protocol = "udp", port = "443" }, # HTTP/3 (QUIC)
+    { key = "70", protocol = "tcp", port = "70" },       # Gopher
+    { key = "1965", protocol = "tcp", port = "1965" },   # Gemini
+  ]
   web_rules = {
-    for pair in setproduct(keys(local.anywhere), ["80", "443"]) : "${pair[0]}-${pair[1]}" => {
+    for pair in setproduct(keys(local.anywhere), local.public_ports) : "${pair[0]}-${pair[1].key}" => {
       ip_type     = pair[0]
-      port        = pair[1]
+      protocol    = pair[1].protocol
+      port        = pair[1].port
       subnet      = local.anywhere[pair[0]].subnet
       subnet_size = local.anywhere[pair[0]].subnet_size
     }
@@ -105,7 +115,7 @@ resource "vultr_firewall_rule" "web" {
   for_each = local.web_rules
 
   firewall_group_id = vultr_firewall_group.lawn.id
-  protocol          = "tcp"
+  protocol          = each.value.protocol
   ip_type           = each.value.ip_type
   subnet            = each.value.subnet
   subnet_size       = each.value.subnet_size
