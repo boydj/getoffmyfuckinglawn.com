@@ -42,7 +42,7 @@ fi
 
 [ -x "$LAWN_BINARY" ] || die "$LAWN_BINARY not found; run 'make build-linux' first"
 for p in web/templates corpus config/crawlers.yaml config/config.example.yaml \
-	deploy/install.sh deploy/host-setup.sh deploy/Caddyfile; do
+	deploy/install.sh deploy/host-setup.sh deploy/Caddyfile deploy/torrc; do
 	[ -e "$root/$p" ] || die "missing $p"
 done
 
@@ -64,7 +64,7 @@ cp -- "$LAWN_BINARY" "$stage/bin/lawn"
 cp -R -- "$root/web/templates" "$stage/templates"
 cp -R -- "$root/corpus" "$stage/corpus"
 cp -- "$root/config/crawlers.yaml" "$root/config/config.example.yaml" "$stage/config/"
-cp -- "$root"/deploy/*.service "$root"/deploy/*.timer "$root"/deploy/*.sh "$root/deploy/Caddyfile" "$stage/deploy/"
+cp -- "$root"/deploy/*.service "$root"/deploy/*.timer "$root"/deploy/*.sh "$root/deploy/Caddyfile" "$root/deploy/torrc" "$stage/deploy/"
 
 sudo=""
 [ "$DEPLOY_USER" = "root" ] || sudo="sudo -n"

@@ -65,6 +65,12 @@ type ASNLookup interface {
 	Lookup(a netip.Addr) (asn uint32, org string, ok bool)
 }
 
+// countryLookup is implemented by lookups that also know the country of
+// an address (attrib.ASNTable). Optional: without it, country is NULL.
+type countryLookup interface {
+	LookupCC(a netip.Addr) (asn uint32, org, cc string, ok bool)
+}
+
 // Logger is the non-blocking request log sink.
 type Logger interface {
 	LogRequest(r logstore.Request) bool
@@ -91,18 +97,29 @@ type Deps struct {
 	PublicDir string
 	Home      []byte // pre-rendered homepage
 	BaseURL   string
-	Now       func() time.Time
+	// Onion is the Tor onion mirror's hostname ("" = none). Onion visitors
+	// get onion-local sitemap links; clearnet pages advertise it with an
+	// Onion-Location header.
+	Onion string
+	Now   func() time.Time
 }
 
-type asnBox struct{ l ASNLookup }
+type asnBox struct {
+	l  ASNLookup
+	cc countryLookup // l, when it also knows countries; else nil
+}
 
 // Server is the public HTTP handler.
 type Server struct {
 	d       Deps
 	asn     atomic.Pointer[asnBox]
 	sitemap []byte
-	shame   http.Handler
-	Metrics *Metrics
+	// Onion mirror: the sitemap with onion links, and the Onion-Location
+	// prefix ("http://xxx.onion"). Both empty without an onion address.
+	onionSitemap []byte
+	onionLoc     string
+	shame        http.Handler
+	Metrics      *Metrics
 }
 
 // New builds a Server.
@@ -113,23 +130,41 @@ func New(d Deps) *Server {
 	s := &Server{d: d, Metrics: &Metrics{}}
 	s.SetASN(d.ASN)
 	s.sitemap = buildSitemap(d.BaseURL, d.Pages.EntryURLs(8))
+	if d.Onion != "" {
+		s.onionLoc = "http://" + d.Onion
+		s.onionSitemap = buildSitemap(s.onionLoc, d.Pages.EntryURLs(8))
+	}
 	s.shame = http.FileServer(shameFS{dir: d.PublicDir})
 	return s
 }
 
 // SetASN atomically swaps the ASN table (SIGHUP reload).
-func (s *Server) SetASN(l ASNLookup) { s.asn.Store(&asnBox{l}) }
+func (s *Server) SetASN(l ASNLookup) {
+	b := &asnBox{l: l}
+	b.cc, _ = l.(countryLookup)
+	s.asn.Store(b)
+}
 
-func (s *Server) lookupASN(a netip.Addr) (uint32, string) {
+func (s *Server) lookupASN(a netip.Addr) (uint32, string, string) {
 	b := s.asn.Load()
+	if logstore.IsOnion(a) {
+		return logstore.OnionASN, logstore.OnionOrg, ""
+	}
 	if b == nil || b.l == nil || !a.IsValid() {
-		return 0, ""
+		return 0, "", ""
+	}
+	if b.cc != nil {
+		asn, org, cc, ok := b.cc.LookupCC(a)
+		if !ok {
+			return 0, "", ""
+		}
+		return asn, org, cc
 	}
 	asn, org, ok := b.l.Lookup(a)
 	if !ok {
-		return 0, ""
+		return 0, "", ""
 	}
-	return asn, org
+	return asn, org, ""
 }
 
 // shedPage is served for /lawn/* when a connection cap is hit.
@@ -140,7 +175,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := s.d.Now()
 	viaProxy := inPrefixes(parseHostAddr(r.RemoteAddr), s.d.Trusted)
 	ip := ClientIP(r.RemoteAddr, r.Header.Get("X-Forwarded-For"), s.d.Trusted)
-	asn, asnOrg := s.lookupASN(ip)
+	asn, asnOrg, country := s.lookupASN(ip)
 	ua := r.UserAgent()
 	path := r.URL.Path
 
@@ -149,6 +184,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		IP:        ip.String(),
 		ASN:       asn,
 		ASNOrg:    asnOrg,
+		Country:   country,
 		UserAgent: ua,
 		Method:    r.Method,
 		Path:      logPath(r.URL),
@@ -174,6 +210,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
+	onion := asn == logstore.OnionASN
 
 	switch {
 	case r.Method != http.MethodGet && r.Method != http.MethodHead:
@@ -196,10 +233,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.logRobots(logstore.RobotsFetch{IP: rec.IP, UserAgent: ua, Ts: rec.TsStart})
 	case path == "/":
 		route = routeHome
+		s.advertiseOnion(h, r, onion)
 		sent = s.writeSmall(w, status, "text/html; charset=utf-8", s.d.Home, r)
 	case path == "/sitemap.xml":
 		route = routeSitemap
-		sent = s.writeSmall(w, status, "application/xml; charset=utf-8", s.sitemap, r)
+		sm := s.sitemap
+		if onion && s.onionSitemap != nil {
+			sm = s.onionSitemap
+		}
+		sent = s.writeSmall(w, status, "application/xml; charset=utf-8", sm, r)
 	case path == "/healthz":
 		route = routeHealth
 		sent = s.writeSmall(w, status, "text/plain; charset=utf-8", []byte("ok\n"), r)
@@ -211,6 +253,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		route = routeShame
 		cw := &countingWriter{ResponseWriter: w, status: http.StatusOK}
 		h.Set("Cache-Control", "public, max-age=60")
+		s.advertiseOnion(h, r, onion)
 		s.shame.ServeHTTP(cw, r)
 		status, sent = cw.status, cw.n
 	default:
@@ -235,6 +278,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// advertiseOnion sets Onion-Location on clearnet HTML pages, so Tor Browser
+// offers the onion mirror of the same page.
+func (s *Server) advertiseOnion(h http.Header, r *http.Request, onion bool) {
+	if s.onionLoc != "" && !onion {
+		h.Set("Onion-Location", s.onionLoc+r.URL.RequestURI())
+	}
+}
+
 func (s *Server) logRobots(f logstore.RobotsFetch) {
 	if !s.d.Logger.LogRobots(f) {
 		s.Metrics.LogDropped.Add(1)
@@ -256,7 +307,7 @@ const (
 func (s *Server) serveMaze(w http.ResponseWriter, r *http.Request, ip netip.Addr, asn uint32, ua string, start time.Time) (int64, bool, string) {
 	h := w.Header()
 	h.Set("Cache-Control", "no-store")
-	h.Set("X-Robots-Tag", "noindex, nofollow")
+	h.Set("X-Robots-Tag", "noindex")
 	h.Set("Content-Type", "text/html; charset=utf-8")
 
 	if r.Method == http.MethodHead {

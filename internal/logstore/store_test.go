@@ -74,7 +74,7 @@ func TestPageIDs(t *testing.T) {
 	err := s.InsertRequests(context.Background(), []Request{
 		{TsStart: 1, IP: "203.0.113.1", Path: "/lawn/a", Depth: 0, IsViolation: true, PageID: 0xFFFFFFFF},
 		{TsStart: 2, IP: "203.0.113.1", Path: "/lawn/a/b", Depth: 1, IsViolation: true, PageID: 7, ParentID: 0xFFFFFFFF},
-		{TsStart: 3, IP: "203.0.113.1", Path: "/", Depth: -1},
+		{TsStart: 3, IP: "203.0.113.1", Path: "/", Depth: -1, Country: "NL"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -93,5 +93,12 @@ func TestPageIDs(t *testing.T) {
 	}
 	if pg, par := get("/"); pg.Valid || par.Valid {
 		t.Errorf("non-maze row should be NULL: %v %v", pg, par)
+	}
+	var cc sql.NullString
+	if err := s.DB().QueryRow(`SELECT country FROM requests WHERE path = '/'`).Scan(&cc); err != nil || cc.String != "NL" {
+		t.Errorf("country %v %v", cc, err)
+	}
+	if err := s.DB().QueryRow(`SELECT country FROM requests WHERE path = '/lawn/a'`).Scan(&cc); err != nil || cc.Valid {
+		t.Errorf("empty country must be NULL: %v %v", cc, err)
 	}
 }

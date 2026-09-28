@@ -84,3 +84,22 @@ func TestBotsCommand(t *testing.T) {
 		t.Error("bad --since should fail")
 	}
 }
+
+func TestVisitorsCommand(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("LAWN_DB_PATH", filepath.Join(dir, "lawn.db"))
+	t.Setenv("LAWN_EXCLUDE_CIDRS", "203.0.113.0/24")
+	var out, errb bytes.Buffer
+	if err := run([]string{"visitors", "-config", "", "--since", "7d", "--lawn", "--ua", "bot"}, &out, &errb); err != nil {
+		t.Fatalf("visitors: %v (%s)", err, errb.String())
+	}
+	if !strings.Contains(out.String(), "No matching visits.") {
+		t.Errorf("empty db: %q", out.String())
+	}
+	if err := run([]string{"visitors", "-config", "", "--ip", "not-an-ip"}, &out, &errb); err == nil {
+		t.Error("bad --ip should fail")
+	}
+	if err := run([]string{"visitors", "-config", "", "--since", "soon"}, &out, &errb); err == nil {
+		t.Error("bad --since should fail")
+	}
+}

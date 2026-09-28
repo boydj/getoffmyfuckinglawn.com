@@ -143,6 +143,14 @@ func (f fakeASN) Lookup(a netip.Addr) (uint32, string, bool) {
 	return n, "TEST-AS" + strconv.Itoa(int(n)), true
 }
 
+func (f fakeASN) LookupCC(a netip.Addr) (uint32, string, string, bool) {
+	n, org, ok := f.Lookup(a)
+	if !ok {
+		return 0, "", "", false
+	}
+	return n, org, "NL", true
+}
+
 type rig struct {
 	srv  *Server
 	lim  *fakeLimiter
@@ -153,19 +161,23 @@ type rig struct {
 	pub  string
 }
 
-func newRig(t *testing.T) *rig {
+func newRig(t *testing.T, opts ...func(*Deps)) *rig {
 	t.Helper()
 	pub := t.TempDir()
 	egr := &fakeEgress{}
 	r := &rig{lim: &fakeLimiter{allow: true}, egr: egr, drip: &fakeDripper{egress: egr}, log: &fakeLogger{}, obs: &fakeObserver{}, pub: pub}
 	clock := time.UnixMilli(1_700_000_000_000)
-	r.srv = New(Deps{
+	d := Deps{
 		Pages: fakePages{}, Dripper: r.drip, Limiter: r.lim, Egress: egr, Logger: r.log, Observer: r.obs,
 		ASN:       fakeASN{"203.0.113.7": 64500},
 		Trusted:   []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")},
 		PublicDir: pub, Home: []byte("<html>home</html>"), BaseURL: "https://example.test",
 		Now: func() time.Time { clock = clock.Add(250 * time.Millisecond); return clock },
-	})
+	}
+	for _, o := range opts {
+		o(&d)
+	}
+	r.srv = New(d)
 	return r
 }
 
@@ -212,7 +224,7 @@ func TestRoutes(t *testing.T) {
 		t.Fatalf("every request must be logged: got %d want %d", len(r.log.reqs), len(cases))
 	}
 	for _, rec := range r.log.reqs {
-		if rec.IP != "203.0.113.7" || rec.UserAgent != "TestBot/1.0" || rec.ASN != 64500 || rec.ASNOrg != "TEST-AS64500" {
+		if rec.IP != "203.0.113.7" || rec.UserAgent != "TestBot/1.0" || rec.ASN != 64500 || rec.ASNOrg != "TEST-AS64500" || rec.Country != "NL" {
 			t.Errorf("bad attribution: %+v", rec)
 		}
 		if rec.TsEnd < rec.TsStart {
@@ -328,7 +340,7 @@ func TestMetricsExposition(t *testing.T) {
 	r.do("GET", "/lawn/a", "", "ua")
 	reg := NewMetricsRegistry(r.srv)
 	reg.Register(Gauge{Name: "lawn_test_extra", Help: "x", Value: func() float64 { return 42 }})
-	ts := httptest.NewServer(NewAdminServer("", reg).Handler)
+	ts := httptest.NewServer(NewAdminServer("", reg, nil).Handler)
 	defer ts.Close()
 	resp, err := http.Get(ts.URL + "/metrics")
 	if err != nil {
@@ -547,10 +559,94 @@ func TestMazeLogsParentID(t *testing.T) {
 	if len(r.log.reqs) != 2 {
 		t.Fatalf("logged %d", len(r.log.reqs))
 	}
+	if w := r.do("GET", "/lawn/x", "203.0.113.7", "ua"); w.Header().Get("X-Robots-Tag") != "noindex" {
+		t.Errorf("X-Robots-Tag %q: maze links must stay followable", w.Header().Get("X-Robots-Tag"))
+	}
 	if e := r.log.reqs[0]; e.PageID == 0 || e.ParentID != 0 {
 		t.Errorf("entry: %+v", e)
 	}
 	if c := r.log.reqs[1]; c.PageID != uint32(len("/lawn/next")) || c.ParentID != 1 {
 		t.Errorf("child: page=%d parent=%d", c.PageID, c.ParentID)
+	}
+}
+
+func TestAdminMazePreview(t *testing.T) {
+	r := newRig(t)
+	ts := httptest.NewServer(NewAdminServer("", NewMetricsRegistry(r.srv), fakePages{}).Handler)
+	defer ts.Close()
+	get := func(path string) (int, string) {
+		t.Helper()
+		resp, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	if code, body := get("/lawn/abc"); code != 200 || !strings.Contains(body, "<title>/lawn/abc</title>") {
+		t.Fatalf("preview: %d %q", code, body)
+	}
+	if code, _ := get("/lawn"); code != 200 {
+		t.Fatalf("/lawn: %d", code)
+	}
+	if code, body := get("/"); code != 200 || !strings.Contains(body, `href="/lawn/entry0"`) || !strings.Contains(body, "never logged") {
+		t.Fatalf("index: %d %q", code, body)
+	}
+	// Nothing was logged, dripped or classified.
+	if len(r.log.reqs) != 0 || r.drip.drips != 0 || r.drip.fasts != 0 || len(r.obs.pairs) != 0 {
+		t.Errorf("preview must not log or drip: reqs=%d drips=%d fasts=%d obs=%d",
+			len(r.log.reqs), r.drip.drips, r.drip.fasts, len(r.obs.pairs))
+	}
+	// Without a renderer there is no preview.
+	plain := httptest.NewServer(NewAdminServer("", NewMetricsRegistry(r.srv), nil).Handler)
+	defer plain.Close()
+	resp, err := http.Get(plain.URL + "/lawn/abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("no renderer: %d", resp.StatusCode)
+	}
+}
+
+const testOnion = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx.onion"
+
+func TestOnionVisitors(t *testing.T) {
+	r := newRig(t, func(d *Deps) { d.Onion = testOnion })
+	circuit := "fc00:dead:beef:4dad::12:3456"
+
+	w := r.do("GET", "/sitemap.xml", circuit, "OnionBot/1.0")
+	if !strings.Contains(w.Body.String(), "<loc>http://"+testOnion+"/lawn/") || strings.Contains(w.Body.String(), "example.test") {
+		t.Errorf("onion sitemap must link to the onion mirror:\n%s", w.Body.String())
+	}
+	if w := r.do("GET", "/", circuit, "OnionBot/1.0"); w.Header().Get("Onion-Location") != "" {
+		t.Error("onion visitors must not be told about the onion mirror")
+	}
+	r.do("GET", "/lawn/abc", circuit, "OnionBot/1.0")
+	for _, rec := range r.log.reqs {
+		if rec.IP != circuit || rec.ASN != logstore.OnionASN || rec.ASNOrg != logstore.OnionOrg || rec.Country != "" {
+			t.Errorf("onion request logged as %s AS%d %q %q", rec.IP, rec.ASN, rec.ASNOrg, rec.Country)
+		}
+	}
+	if r.lim.asns[len(r.lim.asns)-1] != logstore.OnionASN {
+		t.Errorf("limiter should see the onion pseudo-network: %v", r.lim.asns)
+	}
+
+	// Clearnet visitors: normal sitemap, and HTML pages advertise the mirror.
+	w = r.do("GET", "/sitemap.xml", "203.0.113.7", "ua")
+	if !strings.Contains(w.Body.String(), "<loc>https://example.test/lawn/") {
+		t.Errorf("clearnet sitemap:\n%s", w.Body.String())
+	}
+	if got := r.do("GET", "/?x=1", "203.0.113.7", "ua").Header().Get("Onion-Location"); got != "http://"+testOnion+"/?x=1" {
+		t.Errorf("Onion-Location on home: %q", got)
+	}
+	if got := r.do("GET", "/robots.txt", "203.0.113.7", "ua").Header().Get("Onion-Location"); got != "" {
+		t.Errorf("Onion-Location only belongs on HTML pages: %q", got)
+	}
+	// Without an onion address nothing is advertised.
+	if got := newRig(t).do("GET", "/", "203.0.113.7", "ua").Header().Get("Onion-Location"); got != "" {
+		t.Errorf("no onion configured, got %q", got)
 	}
 }

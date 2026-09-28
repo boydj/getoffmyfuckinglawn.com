@@ -24,6 +24,7 @@ import (
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/app"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/config"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/server"
+	"github.com/boydj/getoffmyfuckinglawn.com/internal/visitors"
 )
 
 const usage = `usage: lawn <command> [-config path] [flags]
@@ -36,6 +37,10 @@ commands:
   bots             private report on every bot seen, compliant or not; flags
                    new and unknown ones (--since 7d|36h|all, --unknown, --new,
                    --all, --limit N, --details N)
+  visitors         private log of recent visits, newest first (--since 24h|7d|all,
+                   --limit N [100], --ip ADDR|CIDR, --asn N, --ua TEXT,
+                   --path PREFIX, --lawn, --operators); --ip ADDR gives
+                   that client's timeline, oldest first
   gen-robots       print robots.txt in effect
   version          print the build version
 `
@@ -83,6 +88,12 @@ func run(args []string, stdout, stderr io.Writer) error {
 	onlyNew := fs.Bool("new", false, "bots: only bots first seen in the last 7 days")
 	all := fs.Bool("all", false, "bots: include clients with no bot signal (likely people)")
 	details := fs.Int("details", 10, "bots: detail blocks for unknown/new bots")
+	ipFlag := fs.String("ip", "", "visitors: one address (timeline) or a CIDR")
+	asnFlag := fs.String("asn", "", "visitors: AS number, e.g. AS15169")
+	uaFlag := fs.String("ua", "", "visitors: user agent contains (case-insensitive)")
+	pathFlag := fs.String("path", "", "visitors: path starts with")
+	lawnOnly := fs.Bool("lawn", false, "visitors: only /lawn/ requests")
+	operators := fs.Bool("operators", false, "visitors: include your own networks (exclude_cidrs), marked *")
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
@@ -100,7 +111,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 	switch cmd {
 	case "serve":
-		return serve(ctx, cfg)
+		return serve(ctx, cfg, *cfgPath)
 	case "build-shame":
 		return app.BuildShameOnce(ctx, cfg, stdout)
 	case "verify-refresh":
@@ -116,13 +127,22 @@ func run(args []string, stdout, stderr io.Writer) error {
 		}
 		return app.Bots(ctx, cfg, app.BotsOptions{Since: window, UnknownOnly: *unknown, NewOnly: *onlyNew,
 			All: *all, Limit: *limit, Details: *details}, stdout)
+	case "visitors":
+		n := *limit
+		explicit := false
+		fs.Visit(func(f *flag.Flag) { explicit = explicit || f.Name == "limit" })
+		if !explicit {
+			n = 100
+		}
+		return app.Visitors(ctx, cfg, *since, visitors.Options{IP: *ipFlag, ASN: *asnFlag, UA: *uaFlag,
+			Path: *pathFlag, LawnOnly: *lawnOnly, Operators: *operators, Limit: n}, stdout)
 	default:
 		fmt.Fprint(stderr, usage)
 		return fmt.Errorf("unknown command %q", cmd)
 	}
 }
 
-func serve(ctx context.Context, cfg config.Config) error {
+func serve(ctx context.Context, cfg config.Config, cfgPath string) error {
 	log.Printf("lawn %s starting", version)
 	a, err := app.New(cfg, app.Options{Logf: log.Printf})
 	if err != nil {
@@ -137,7 +157,15 @@ func serve(ctx context.Context, cfg config.Config) error {
 			case <-ctx.Done():
 				return
 			case <-hup:
-				if err := a.Reload(); err != nil {
+				err := a.Reload()
+				// exclude_cidrs is the one config.yaml key applied live;
+				// everything else still needs a restart.
+				if c, cerr := config.Load(cfgPath, os.Getenv); cerr != nil {
+					err = errors.Join(err, cerr)
+				} else {
+					a.SetExclude(c.Exclude)
+				}
+				if err != nil {
 					log.Printf("reload: %v", err)
 				} else {
 					log.Printf("reload: ok")

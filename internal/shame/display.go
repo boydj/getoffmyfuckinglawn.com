@@ -23,6 +23,9 @@ func DisplayCIDR(ip string, status string) string {
 		return ""
 	}
 	a = a.WithZone("").Unmap()
+	if logstore.IsOnion(a) {
+		return "" // a Tor circuit id: nothing to publish, whatever the status
+	}
 	if status == logstore.StatusVerified {
 		return netip.PrefixFrom(a, a.BitLen()).String()
 	}
@@ -41,7 +44,7 @@ func DisplayCIDR(ip string, status string) string {
 // rule. It is a belt-and-braces check applied before anything is written.
 func publishable(cidr, status string) bool {
 	p, err := netip.ParsePrefix(cidr)
-	if err != nil {
+	if err != nil || p.Overlaps(logstore.OnionNet) {
 		return false
 	}
 	if status == logstore.StatusVerified {
@@ -102,22 +105,18 @@ func Slugify(s string) string {
 	return out
 }
 
-// ASNLabel is the display name of an autonomous system.
+// ASNLabel is the display name of an autonomous system; onion traffic
+// shows as "Tor onion service".
 func ASNLabel(asn uint32, org string) string {
-	switch {
-	case asn == 0 && org == "":
-		return "unknown ASN"
-	case asn == 0:
-		return org
-	case org == "":
-		return "AS" + strconv.FormatUint(uint64(asn), 10)
-	}
-	return "AS" + strconv.FormatUint(uint64(asn), 10) + " " + org
+	return logstore.NetworkLabel(asn, org, "unknown ASN")
 }
 
 func asnSlug(asn uint32, org string) string {
-	if asn == 0 {
+	switch asn {
+	case 0:
 		return "unknown-asn"
+	case logstore.OnionASN:
+		return "tor-onion-service"
 	}
 	s := "as" + strconv.FormatUint(uint64(asn), 10)
 	if org != "" {

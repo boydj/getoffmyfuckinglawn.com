@@ -96,16 +96,20 @@ lawn stats [--since 24h|7d|30d|all] [--limit N]   # top offenders to stdout
 lawn gen-robots                # print robots.txt in effect (also validates the config)
 lawn bots [--since 7d|36h|all] [--unknown] [--new] [--all] [--limit N] [--details N]
                                # private report on every bot seen, compliant or not
+lawn visitors [--since 24h|7d|all] [--limit N] [--ip ADDR|CIDR] [--asn N] [--ua TEXT]
+              [--path PREFIX] [--lawn] [--operators]
+                               # private per-request log, newest first; --ip ADDR = one client's timeline
 ```
 
-- **SIGHUP** (`systemctl reload lawn`) reloads the ASN table and `crawlers.yaml`.
+- **SIGHUP** (`systemctl reload lawn`) reloads the ASN table, `crawlers.yaml` and `exclude_cidrs` from `config.yaml`. Other `config.yaml` changes need a restart.
 - **SIGTERM** shuts down gracefully and drains the log writer.
 
 ### Configuration
 
 - `config/config.example.yaml` documents every key; the spec defaults are built in.
 - `LAWN_SECRET` (the HMAC key, at least 16 bytes) comes only from the environment, from the variable named by `server_secret_env`.
-- Paths, listeners and trusted proxies can be overridden with `LAWN_DB_PATH`, `LAWN_PUBLIC_DIR`, `LAWN_ASN_DB_PATH`, `LAWN_CORPUS_DIR`, `LAWN_CRAWLERS_FILE`, `LAWN_TEMPLATES_DIR`, `LAWN_RANGES_CACHE_DIR`, `LAWN_LISTEN`, `LAWN_ADMIN_LISTEN`, `LAWN_BASE_URL` and `LAWN_TRUSTED_PROXIES` (comma-separated).
+- Paths, listeners and trusted proxies can be overridden with `LAWN_DB_PATH`, `LAWN_PUBLIC_DIR`, `LAWN_ASN_DB_PATH`, `LAWN_CORPUS_DIR`, `LAWN_CRAWLERS_FILE`, `LAWN_TEMPLATES_DIR`, `LAWN_RANGES_CACHE_DIR`, `LAWN_LISTEN`, `LAWN_ADMIN_LISTEN`, `LAWN_BASE_URL`, `LAWN_TRUSTED_PROXIES` and `LAWN_EXCLUDE_CIDRS` (both comma-separated).
+- **`exclude_cidrs`** lists your own networks. Visits from them are still logged, but left out of the wall, the well-behaved page, the feed, the blocklist, `lawn stats` and `lawn bots`. `lawn visitors` hides them unless you pass `--operators`, which shows them marked `*`. The filter is applied when reports are built, so adding a network also removes its past visits; removing it brings them back. SSH `admin_cidrs` is deliberately not copied in: it can hold shared addresses (an airline's, a café's), and excluding those would hide strangers too.
 
 `config/crawlers.yaml` lists the known crawlers and how each is verified, with a comment citing the vendor's documentation. Where a vendor publishes no verification method, the entry is `verify: none` with a TODO, and hits carrying that UA are labelled "claimed, unverifiable".
 
@@ -123,7 +127,7 @@ Everything goes through `make`. The target is one dedicated Vultr instance that 
 - **cloud-init** (first boot):
   - writes the `deploy/` units, scripts and Caddyfile;
   - puts the secret in `/etc/lawn/env`;
-  - runs `deploy/host-setup.sh`, which installs Caddy (official apt repo), sqlite3, unattended-upgrades and needrestart, creates the `lawn` user and directories, caps journald, tunes socket sysctls, enables the timers, and downloads the iptoasn.com ASN dataset.
+  - runs `deploy/host-setup.sh`, which installs Caddy (official apt repo), Tor (the Tor Project's apt repo, signing key pinned by fingerprint), sqlite3, unattended-upgrades and needrestart, creates the `lawn` user and directories, caps journald, tunes socket sysctls, enables the timers, and downloads the iptoasn.com ASN dataset.
 - **`make deploy`**
   - cross-compiles a static linux/amd64 binary and ships it, the templates, the corpus, `crawlers.yaml` and the `deploy/` files over one SSH connection;
   - re-runs the idempotent host setup, preflights the new binary, swaps it in atomically and restarts;
@@ -211,8 +215,13 @@ lawn stats --since 24h                               # top offenders
 systemctl reload lawn                                # re-read ASN table + crawlers.yaml
 systemctl start lawn-asn-refresh                     # refresh ASN data now
 systemctl start lawn-verify-refresh                  # re-verify identities now
-ssh -L 9090:127.0.0.1:9090 root@<ip>                 # then curl localhost:9090/metrics
+ssh -L 9090:127.0.0.1:9090 root@<ip>                 # then open http://localhost:9090/ (see below)
+lawn visitors --since 24h                            # every recent visit, newest first
+lawn visitors --lawn --since 7d                      # every maze hit this week
+lawn visitors --ip 198.51.100.9 --since all          # one client's full timeline
 ```
+
+**Viewing the maze without being logged.** The admin listener (`admin_listen`, localhost only) also serves the maze: `/lawn/...` renders exactly what the public site would, all at once, with no drip, no limits and no log row. Open an SSH tunnel with `ssh -L 9090:127.0.0.1:9090 root@<ip>` and browse `http://localhost:9090/`. That page lists the sitemap's entry points, and the links on each maze page keep working. `/metrics` is on the same port. Browsing the public site from your own networks is fine too once they are in `exclude_cidrs`.
 
 **Timers**
 - **Weekly iptoasn.com refresh:** validates gzip, size and format, swaps the file in atomically, then reloads lawn.
@@ -263,6 +272,24 @@ lawn bots --since all              # everything, including rolled-up history
 ```
 
 **Retention.** Raw request rows older than `retention.raw_requests_days` (90) are rolled into `daily_aggregates` (violators) and `daily_visits` (every visitor) by the running server.
+
+### Tor onion mirror
+
+The whole site is also served as a Tor onion service, set up by `make deploy` with no extra steps. Tor only makes outbound connections, so no firewall change is needed.
+
+- **How it works:** tor (`deploy/torrc`) runs a *single* onion service. The server's location isn't secret, so circuits are 3 hops instead of 6, while visitors stay anonymous. tor hands each connection to Caddy on `127.0.0.1:8081` with a PROXY header naming the client's circuit (`fc00:dead:beef:4dad::<id>`). Caddy proxies to the app like any other request.
+- **In the logs:** onion visitors have no IP address. The circuit address is stored in its place, so sessions and per-client limits work per circuit. The network is "Tor onion service" (the reserved AS4294967295), with no country and no reverse DNS. Crawler claims over Tor can't be verified, so they're labelled "claimed, unverifiable". `lawn visitors --asn 4294967295` lists onion traffic.
+- **Limits:** all onion traffic shares the per-network caps: 200 connections for the pseudo-ASN, and 50 connections at 10 new maze requests per second for its /48. tor itself allows at most 32 streams per circuit.
+- **On the wall:** onion violators and well-behaved onion crawlers appear as one network, "Tor onion service". No circuit ID is ever published, and none goes into the blocklist.
+- **Advertising the mirror:** the clearnet home page and wall pages send `Onion-Location`, so Tor Browser offers the mirror. The home page links it. Onion visitors get a sitemap that points at the onion mirror.
+
+```sh
+make onion-address      # the mirror's hostname
+make onion-backup       # copy its private key off the box to onion-keys.tar.gz (gitignored; keep it safe)
+```
+
+- **The key is the address.** It lives only in `/var/lib/tor/lawn/`, and a rebuilt server gets a new address unless you restore it. To restore on a new box, before the first deploy: `tar -C /var/lib/tor -xzf onion-keys.tar.gz`, then `chown -R debian-tor:debian-tor /var/lib/tor/lawn && chmod 700 /var/lib/tor/lawn`. Per tor(1), that directory must never be reused for a normal (anonymous) onion service.
+- **To turn the mirror off:** `systemctl disable --now tor@default`, then remove `LAWN_ONION_ADDRESS` from `/etc/lawn/env` and `systemctl restart lawn`. The next deploy turns it back on.
 
 ### Backups and restore
 

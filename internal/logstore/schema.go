@@ -111,4 +111,9 @@ ALTER TABLE requests ADD COLUMN page_id INTEGER;
 ALTER TABLE requests ADD COLUMN parent_id INTEGER;
 CREATE INDEX idx_req_page ON requests(page_id) WHERE page_id IS NOT NULL;
 `,
+	// 5: country of the client's IP range, from the iptoasn.com file the
+	// ASN lookup already uses. Private analysis only; never published.
+	`
+ALTER TABLE requests ADD COLUMN country TEXT;
+`,
 }

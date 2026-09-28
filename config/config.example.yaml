@@ -12,8 +12,18 @@ listen: "127.0.0.1:8080"
 admin_listen: "127.0.0.1:9090"
 # Absolute site URL, used for sitemap.xml and feed links.
 base_url: "https://getoffmyfuckinglawn.com"
+# The Tor onion mirror's hostname (xxx.onion). Deploy writes it to
+# /etc/lawn/env as LAWN_ONION_ADDRESS from tor's hostname file, so leave this
+# empty unless you run tor yourself. Enables Onion-Location on the clearnet
+# site and onion-local sitemap links for onion visitors.
+onion_address: ""
 # Peers whose X-Forwarded-For is trusted: Caddy on the same host only.
 trusted_proxies: ["127.0.0.1/32", "::1/128"]
+# Your own networks (CIDRs or single addresses). Visits from them are still
+# logged, but left out of the wall, the well-behaved page, `lawn bots` and
+# `lawn stats`, and hidden by `lawn visitors` unless you pass --operators.
+# Applies to history too. Reload with: systemctl reload lawn
+exclude_cidrs: []
 # Name of the env var holding the HMAC secret that seeds the maze.
 server_secret_env: "LAWN_SECRET"
 

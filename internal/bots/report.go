@@ -98,6 +98,7 @@ func writeDetails(w io.Writer, b *Bot) {
 	fmt.Fprintf(w, "  identity:     %s\n", statusSummary(b.Statuses))
 	fmt.Fprintf(w, "  networks:     %s\n", joinOr(top(b.ASNs, 3), "-"))
 	fmt.Fprintf(w, "  PTR domains:  %s\n", joinOr(top(b.PTRDomains, 3), "none"))
+	fmt.Fprintf(w, "  countries:    %s\n", joinOr(top(b.Countries, 5), "-"))
 	fmt.Fprintf(w, "  headers sent: %s\n", orDash(b.HeaderNames))
 	fmt.Fprintf(w, "  protocol:     %s\n", joinOr(top(b.Protos, 2), "-"))
 	fmt.Fprintf(w, "  TLS:          %s\n", joinOr(top(b.TLS, 2), "-"))

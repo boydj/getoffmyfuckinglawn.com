@@ -1,0 +1,31 @@
+# Managed by lawn host-setup.sh (deploy/torrc): installed as /etc/tor/torrc.
+#
+# A single onion service mirroring the site. "Single" (non-anonymous) because
+# the server is public anyway: circuits are 3 hops instead of 6, which is
+# faster and lighter on the Tor network. Visitors stay anonymous.
+# See tor(1): HiddenServiceNonAnonymousMode, HiddenServiceSingleHopMode.
+#
+# The service directory holds the onion address's private key. It is created
+# by tor on first start, never leaves the host, and must never be committed.
+# Back it up off the box with `make onion-backup`. Per tor(1), a directory
+# once used in single-hop mode must never be reused for a normal onion
+# service.
+
+# Required by single onion mode: no client-side Tor on this instance.
+SocksPort 0
+HiddenServiceNonAnonymousMode 1
+HiddenServiceSingleHopMode 1
+
+HiddenServiceDir /var/lib/tor/lawn/
+# Caddy's onion listener (see deploy/Caddyfile), which speaks PROXY protocol.
+HiddenServicePort 80 127.0.0.1:8081
+# Each client circuit arrives as fc00:dead:beef:4dad::<circuit id> in a PROXY
+# header, so the app can tell circuits apart (sessions, per-client limits)
+# without any real client address. The app never publishes these.
+HiddenServiceExportCircuitID haproxy
+# At most 32 simultaneous streams per circuit; a circuit that asks for more is
+# torn down. The app's own per-client and per-network caps apply on top.
+HiddenServiceMaxStreams 32
+HiddenServiceMaxStreamsCloseCircuit 1
+# Ask introduction points to rate-limit introduction floods (tor defaults).
+HiddenServiceEnableIntroDoSDefense 1

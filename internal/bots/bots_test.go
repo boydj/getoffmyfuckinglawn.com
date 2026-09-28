@@ -3,6 +3,7 @@ package bots
 import (
 	"bytes"
 	"context"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,6 +69,7 @@ func fixture(t *testing.T) (*logstore.Store, []attrib.Crawler, time.Time) {
 	}
 	// The browser row carries Accept-Language (it's what real browsers send).
 	rows[6].HeaderNames, rows[6].AcceptLanguage = "Accept,Accept-Language,User-Agent", "en-US"
+	rows[2].Country, rows[3].Country = "DE", "DE"
 	ctx := context.Background()
 	if err := s.InsertRequests(ctx, rows); err != nil {
 		t.Fatal(err)
@@ -252,5 +254,38 @@ func TestFrontier(t *testing.T) {
 	rs.Close()
 	if !strings.Contains(plan.String(), "idx_req_page") {
 		t.Errorf("parent lookup does not use idx_req_page:\n%s", plan.String())
+	}
+}
+
+func TestExcludeAndCountries(t *testing.T) {
+	s, cr, now := fixture(t)
+	opt := Options{DB: s.DB(), Crawlers: cr, Now: func() time.Time { return now }}
+	r, err := Collect(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := byToken(r)
+	if sh := m["ShinyNewCrawler"]; sh == nil || sh.Countries["DE"] != 2 {
+		t.Fatalf("countries: %+v", sh)
+	}
+	var out bytes.Buffer
+	Write(&out, r, WriteOptions{Details: 10})
+	if !strings.Contains(out.String(), "countries:    DE") {
+		t.Errorf("report lacks countries:\n%s", out.String())
+	}
+	// Operator networks vanish, from raw rows and rollups alike.
+	opt.Exclude = []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24"), netip.MustParsePrefix("192.0.2.200/32")}
+	r, err = Collect(context.Background(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = byToken(r)
+	for _, gone := range []string{"ShinyNewCrawler", "ArchiveWalker"} {
+		if _, ok := m[gone]; ok {
+			t.Errorf("%s is on an excluded network", gone)
+		}
+	}
+	if _, ok := m["Googlebot"]; !ok {
+		t.Error("exclusion removed an unrelated bot")
 	}
 }

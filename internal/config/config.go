@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -76,7 +77,9 @@ type Config struct {
 	Listen          string    `yaml:"listen"`
 	AdminListen     string    `yaml:"admin_listen"`
 	BaseURL         string    `yaml:"base_url"`
+	OnionAddress    string    `yaml:"onion_address"`
 	TrustedProxies  []string  `yaml:"trusted_proxies"`
+	ExcludeCIDRs    []string  `yaml:"exclude_cidrs"`
 	ServerSecretEnv string    `yaml:"server_secret_env"`
 	DBPath          string    `yaml:"db_path"`
 	ASNDBPath       string    `yaml:"asn_db_path"`
@@ -97,6 +100,9 @@ type Config struct {
 	Secret []byte `yaml:"-"`
 	// Proxies is TrustedProxies parsed.
 	Proxies []netip.Prefix `yaml:"-"`
+	// Exclude is ExcludeCIDRs parsed: the operator's own networks, kept out
+	// of the wall, the well-behaved page and private reports.
+	Exclude []netip.Prefix `yaml:"-"`
 }
 
 // Default returns the spec defaults (SPEC.md section 9).
@@ -138,6 +144,7 @@ var envOverrides = []struct {
 	{"LAWN_LISTEN", func(c *Config) *string { return &c.Listen }},
 	{"LAWN_ADMIN_LISTEN", func(c *Config) *string { return &c.AdminListen }},
 	{"LAWN_BASE_URL", func(c *Config) *string { return &c.BaseURL }},
+	{"LAWN_ONION_ADDRESS", func(c *Config) *string { return &c.OnionAddress }},
 	{"LAWN_DB_PATH", func(c *Config) *string { return &c.DBPath }},
 	{"LAWN_ASN_DB_PATH", func(c *Config) *string { return &c.ASNDBPath }},
 	{"LAWN_PUBLIC_DIR", func(c *Config) *string { return &c.PublicDir }},
@@ -171,6 +178,9 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	if v := getenv("LAWN_TRUSTED_PROXIES"); v != "" {
 		c.TrustedProxies = strings.Split(v, ",")
 	}
+	if v := getenv("LAWN_EXCLUDE_CIDRS"); v != "" {
+		c.ExcludeCIDRs = strings.Split(v, ",")
+	}
 	if c.ServerSecretEnv != "" {
 		if s := getenv(c.ServerSecretEnv); s != "" {
 			c.Secret = []byte(s)
@@ -179,11 +189,14 @@ func Load(path string, getenv func(string) string) (Config, error) {
 	return c, c.Validate()
 }
 
-// Validate parses TrustedProxies into Proxies and checks invariants. Load
-// calls it; call it yourself after building a Config by hand.
-func (c *Config) Validate() error {
-	c.Proxies = nil
-	for _, p := range c.TrustedProxies {
+// onionRE matches a v3 onion service hostname, as tor writes it to the
+// service directory's hostname file.
+var onionRE = regexp.MustCompile(`^[a-z2-7]{56}\.onion$`)
+
+// parsePrefixes parses CIDRs or bare addresses (as /32 or /128).
+func parsePrefixes(key string, in []string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, p := range in {
 		p = strings.TrimSpace(p)
 		if p == "" {
 			continue
@@ -192,11 +205,33 @@ func (c *Config) Validate() error {
 		if err != nil {
 			addr, aerr := netip.ParseAddr(p)
 			if aerr != nil {
-				return fmt.Errorf("config: trusted_proxies: %q: %w", p, err)
+				return nil, fmt.Errorf("config: %s: %q: %w", key, p, err)
 			}
 			pfx = netip.PrefixFrom(addr, addr.BitLen())
 		}
-		c.Proxies = append(c.Proxies, pfx.Masked())
+		out = append(out, pfx.Masked())
+	}
+	return out, nil
+}
+
+// Validate parses TrustedProxies into Proxies and ExcludeCIDRs into
+// Exclude, and checks invariants. Load calls it; call it yourself after
+// building a Config by hand.
+func (c *Config) Validate() error {
+	var err error
+	if c.Proxies, err = parsePrefixes("trusted_proxies", c.TrustedProxies); err != nil {
+		return err
+	}
+	if c.Exclude, err = parsePrefixes("exclude_cidrs", c.ExcludeCIDRs); err != nil {
+		return err
+	}
+	if c.OnionAddress != "" && !onionRE.MatchString(c.OnionAddress) {
+		return fmt.Errorf("config: onion_address %q is not a v3 onion hostname (56 base32 characters + .onion)", c.OnionAddress)
+	}
+	for _, p := range c.Exclude {
+		if p.Bits() == 0 {
+			return fmt.Errorf("config: exclude_cidrs: %s would hide every visitor", p)
+		}
 	}
 	var errs []error
 	if c.Drip.ChunkBytes <= 0 {

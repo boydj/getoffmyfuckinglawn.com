@@ -12,6 +12,7 @@ type HomeData struct {
 	RobotsTxt string
 	Bait      []string // hidden /lawn/ entry links
 	BaseURL   string
+	Onion     string // onion mirror hostname, "" = none
 }
 
 // RenderHome renders the static homepage once at startup. It parses every

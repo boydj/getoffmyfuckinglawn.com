@@ -16,6 +16,24 @@
 		}
 		max_header_size 16KB
 	}
+	# The Tor onion service's listener (deploy/torrc). tor connects here and
+	# sends a PROXY header whose source address encodes the client circuit;
+	# connections without one are refused. Server options are not inherited
+	# from the block above, so they are repeated.
+	servers 127.0.0.1:8081 {
+		listener_wrappers {
+			proxy_protocol {
+				timeout 5s
+				fallback_policy require
+			}
+		}
+		protocols h1
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+		max_header_size 16KB
+	}
 }
 
 www.{$LAWN_DOMAIN} {
@@ -45,6 +63,23 @@ www.{$LAWN_DOMAIN} {
 			# Otherwise the transport adds "Accept-Encoding: gzip" when the
 			# client sent none, and the app would log Caddy's header as the
 			# client's.
+			compression off
+		}
+	}
+}
+
+# The onion mirror: plain HTTP (onion addresses are end-to-end encrypted by
+# Tor), any Host, localhost only. X-Forwarded-For carries the circuit address
+# from the PROXY header, fc00:dead:beef:4dad::/96, which the app recognises
+# as Tor. Same proxy settings as above, minus TLS details.
+http://:8081 {
+	bind 127.0.0.1
+	reverse_proxy 127.0.0.1:8080 {
+		flush_interval -1
+		header_up X-Lawn-Client-Proto {http.request.proto}
+		header_up -X-Lawn-Client-TLS
+		transport http {
+			dial_timeout 3s
 			compression off
 		}
 	}

@@ -126,7 +126,7 @@ func TestIntegrationCrawlerWalk(t *testing.T) {
 	pubLn, _ := net.Listen("tcp", "127.0.0.1:0")
 	admLn, _ := net.Listen("tcp", "127.0.0.1:0")
 	pub := server.NewPublicServer("", a.Server, cfg.Drip.MaxDuration)
-	adm := server.NewAdminServer("", a.Metrics)
+	adm := server.NewAdminServer("", a.Metrics, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- a.serve(ctx, pub, adm, pubLn, admLn) }()
