@@ -192,6 +192,12 @@
 # fetchers generally ignore robots.txt rules" (user-triggered fetchers page).
 - org: Google
   name: Google user-triggered fetchers
+  # TODO: catalogues also list GoogleAgent-Mariner (Project Mariner) and a
+  # "Google Publisher Center" fetcher; add their tokens once they are read
+  # on the user-triggered fetchers page itself (checked via search only,
+  # 2026-09-30). Chrome-Lighthouse is left out on purpose: Lighthouse also
+  # runs in anyone's Chrome DevTools and CI, so a Google-list check would
+  # brand those users as spoofers.
   ua_patterns: ['\bFeedFetcher-Google\b', '\bGoogle-Read-Aloud\b', '\bGoogle-Site-Verification\b',
     '\bGoogle-Pinpoint\b', '\bGoogle-CWS\b', '\bGoogle-NotebookLM\b', '\bGoogle-Agent\b']
   verify:
@@ -216,6 +222,19 @@
   # NOTE: robots.txt product token only; Google documents no fetcher with this UA.
   verify: {method: none}
 
+# Source: https://developers.google.com/crawling/docs/crawlers-fetchers/google-common-crawlers
+# "Google's common crawlers generally crawl from the IP ranges published in
+# the common-crawlers.json object, and the reverse DNS mask of their hostname
+# matches crawl-***-***-***-***.googlebot.com or
+# geo-crawl-***-***-***-***.geo.googlebot.com" - the same check as Googlebot
+# below (see there for why only googlebot.com). GoogleOther also matches its
+# -Image and -Video variants. DuplexWeb-Google is not added: Google shut
+# Duplex on the web down.
+- org: Google
+  name: Google common crawlers
+  ua_patterns: ['\bGoogleOther\b', '\bStorebot-Google\b', '\bGoogle-InspectionTool\b']
+  verify: {method: rdns, domains: [googlebot.com]}
+
 # Source: https://developers.google.com/crawling/docs/crawlers-fetchers/verify-google-requests
 # Google's verification page accepts googlebot.com, google.com and
 # googleusercontent.com, but per the common-crawlers page, Googlebot itself
@@ -233,12 +252,27 @@
 
 # ------------------------------------------------------------- Microsoft
 # Source: https://www.bing.com/webmasters/help/how-to-verify-bingbot-3905dc26
-# Reverse DNS must end in search.msn.com, then forward confirm. That page
-# says Bing does not publish a list of IP addresses.
+# Reverse DNS must end in search.msn.com, then forward confirm. (Bing now
+# also serves www.bing.com/toolbox/bingbot.json; reverse DNS is kept.)
+# The other crawlers: "Microsoft has four bots that may crawl your site:
+# Bingbot, Adidxbot, MSNbot, or BingPreview", all verified the same way
+# (https://about.ads.microsoft.com/en-gb/blog/post/may-2014/tips-to-control-traffic-spikes-caused-by-bots-crawling-your-web-site;
+# the crawler list is at
+# https://www.bing.com/webmasters/help/which-crawlers-does-bing-use-8c184ec0).
 - org: Microsoft
   name: Bingbot
-  ua_patterns: ['\bbingbot\b']
+  ua_patterns: ['\bbingbot\b', '\badidxbot\b', '\bmsnbot\b', '\bBingPreview\b']
   verify: {method: rdns, domains: [search.msn.com]}
+
+# MicrosoftPreview fetches link previews for Teams, Outlook and other
+# Microsoft apps when someone shares a URL (so user-triggered).
+- org: Microsoft
+  name: MicrosoftPreview
+  ua_patterns: ['\bMicrosoftPreview\b']
+  # TODO: only third-party pages describe it (they point at Bing's Verify
+  # Bingbot tool); no Microsoft page confirming its reverse DNS or an IP list
+  # was found (searched 2026-09-30).
+  verify: {method: none}
 
 # ------------------------------------------------------------ DuckDuckGo
 # Sources: https://duckduckgo.com/duckduckgo-help-pages/results/duckduckbot
@@ -349,3 +383,32 @@
   ua_patterns: ['\bmeta-externalagent\b']
   # TODO: no official verification method found (checked the page above, 2026-09-26)
   verify: {method: none}
+
+# Same page: facebookexternalhit fetches a link when it is shared on Meta's
+# apps (user-triggered) and "might bypass robots.txt when performing
+# security or integrity checks". The user_triggered/robots_exempt flags only
+# take effect once verified, so they are left off until there is a method.
+# FacebookBot: https://developers.facebook.com/docs/sharing/bot/
+- org: Meta
+  name: facebookexternalhit
+  ua_patterns: ['\bfacebookexternalhit\b']
+  # TODO: no official verification method found (checked 2026-09-30)
+  verify: {method: none}
+
+- org: Meta
+  name: FacebookBot
+  ua_patterns: ['\bFacebookBot\b']
+  # TODO: no official verification method found (checked 2026-09-30)
+  verify: {method: none}
+
+# ---------------------------------------------------------------- Yandex
+# Source: https://yandex.com/support/webmaster/en/robot-workings/check-yandex-robots
+# "All Yandex robots have names ending in yandex.ru, yandex.net or
+# yandex.com", then forward confirm. Yandex does not publish its addresses
+# ("their list is not disclosed"). The tokens are Yandex's robots as listed
+# in its help pages and the catalogues; they are spelled out rather than
+# matched as Yandex* so Yandex's own apps and browser are never included.
+- org: Yandex
+  name: YandexBot
+  ua_patterns: ['\bYandex(?:Bot|MobileBot|AccessibilityBot|AdditionalBot|Images|Media|Metrika|News|Video|Favicons|Market)\b']
+  verify: {method: rdns, domains: [yandex.ru, yandex.net, yandex.com]}

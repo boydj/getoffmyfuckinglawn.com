@@ -30,6 +30,13 @@ const (
 	ondrejnovURL = "https://raw.githubusercontent.com/ondrejnov/bot-ips/main/sources.json"
 )
 
+// declined lists catalogue user agents deliberately left out of
+// crawlers.yaml, with the reason (see DECISIONS.md).
+var declined = map[string]string{
+	"Chrome-Lighthouse": "left out: Lighthouse also runs in anyone's DevTools and CI",
+	"DuplexWeb-Google":  "left out: Google shut Duplex on the web down",
+}
+
 type ipverseDoc struct {
 	Services map[string]struct {
 		SourceURL     string   `json:"source_url"`
@@ -45,6 +52,10 @@ type Finding struct {
 	Service string // catalogue name
 	From    string // catalogue
 	Note    string
+	// Settled: nothing to add. The list or user agent is already covered
+	// by an entry, or the list is unusable. Kept for reference, printed
+	// after the leads.
+	Settled bool
 }
 
 // Check compares crawlers with the two catalogues (either may be nil).
@@ -64,19 +75,27 @@ func Check(crawlers []attrib.Crawler, ipverse, ondrejnov []byte) ([]Finding, err
 				f := Finding{Kind: "list", What: s.SourceURL, Service: name, From: "ipverse"}
 				switch {
 				case !s.Authoritative || strings.Contains(s.SourceURL, "githubusercontent.com"):
-					f.Note = "not vendor-published (e.g. a whole ASN): do not use for verification"
+					f.Note, f.Settled = "not vendor-published (e.g. a whole ASN): do not use for verification", true
 				default:
 					if c := coveredBy(crawlers, s.UserAgents); c != nil {
-						f.Note = fmt.Sprintf("its user agents already match %q (%s)", c.Name, c.Verify.Method)
+						f.Note, f.Settled = fmt.Sprintf("its user agents already match %q (%s)", c.Name, c.Verify.Method), true
 					}
 				}
 				out = append(out, f)
 			}
 			for _, p := range s.UserAgents {
 				ua := strings.Trim(p, "*")
-				if ua != "" && attrib.MatchUA(crawlers, ua) == nil {
-					out = append(out, Finding{Kind: "ua", What: ua, Service: name, From: "ipverse"})
+				if ua == "" || attrib.MatchUA(crawlers, ua) != nil {
+					continue
 				}
+				f := Finding{Kind: "ua", What: ua, Service: name, From: "ipverse"}
+				if why, ok := declined[ua]; ok {
+					f.Note, f.Settled = why, true
+				} else if c := mentionedBy(crawlers, ua); c != nil {
+					// e.g. the catalogue's "NotebookLM" for our Google-NotebookLM.
+					f.Note, f.Settled = fmt.Sprintf("a longer form of it is matched by %q", c.Name), true
+				}
+				out = append(out, f)
 			}
 		}
 	}
@@ -86,13 +105,21 @@ func Check(crawlers []attrib.Crawler, ipverse, ondrejnov []byte) ([]Finding, err
 			return nil, fmt.Errorf("ondrejnov: %w", err)
 		}
 		for name, u := range src {
-			if !used[normURL(u)] {
-				out = append(out, Finding{Kind: "list", What: u, Service: name, From: "ondrejnov"})
+			if used[normURL(u)] {
+				continue
 			}
+			f := Finding{Kind: "list", What: u, Service: name, From: "ondrejnov"}
+			if c := namedBy(crawlers, name); c != nil {
+				f.Note, f.Settled = fmt.Sprintf("its name matches %q (%s)", c.Name, c.Verify.Method), true
+			}
+			out = append(out, f)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i], out[j]
+		if a.Settled != b.Settled {
+			return !a.Settled
+		}
 		if a.Kind != b.Kind {
 			return a.Kind < b.Kind
 		}
@@ -117,6 +144,32 @@ func coveredBy(crawlers []attrib.Crawler, uas []string) *attrib.Crawler {
 		}
 	}
 	return first
+}
+
+// mentionedBy returns the first entry with a pattern that contains ua
+// (case-insensitively): a catalogue that lists a shortened token.
+func mentionedBy(crawlers []attrib.Crawler, ua string) *attrib.Crawler {
+	ua = strings.ToLower(ua)
+	for i := range crawlers {
+		for _, re := range crawlers[i].Patterns {
+			if strings.Contains(strings.ToLower(re.String()), ua) {
+				return &crawlers[i]
+			}
+		}
+	}
+	return nil
+}
+
+// namedBy returns the entry a catalogue service name refers to: one whose
+// name or org equals it, or whose patterns match it (ondrejnov names its
+// lists after the bot, e.g. "bingbot", "perplexity-user", "ahrefs").
+func namedBy(crawlers []attrib.Crawler, name string) *attrib.Crawler {
+	for i := range crawlers {
+		if strings.EqualFold(crawlers[i].Name, name) || strings.EqualFold(crawlers[i].Org, name) {
+			return &crawlers[i]
+		}
+	}
+	return attrib.MatchUA(crawlers, name)
 }
 
 // normURL makes http/https and www. variants of one list compare equal.
@@ -172,8 +225,18 @@ func main() {
 		fmt.Println("crawlers.yaml covers every list and user agent in the catalogues.")
 		return
 	}
-	fmt.Println("Leads to check against each vendor's own documentation before adding anything:")
-	for _, f := range findings {
+	settled := false
+	for i, f := range findings {
+		switch {
+		case i == 0 && !f.Settled:
+			fmt.Println("Leads to check against each vendor's own documentation before adding anything:")
+		case f.Settled && !settled:
+			if i == 0 {
+				fmt.Println("No leads.")
+			}
+			fmt.Println("\nAlready covered or unusable (for reference):")
+			settled = true
+		}
 		label := map[string]string{"list": "IP list not used", "ua": "user agent not matched"}[f.Kind]
 		fmt.Printf("  %-22s %-70s %s (%s)", label, f.What, f.Service, f.From)
 		if f.Note != "" {

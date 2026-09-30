@@ -191,22 +191,44 @@ func TestRepoCrawlersAdded(t *testing.T) {
 	}{
 		"AdsBot-Google (+http://www.google.com/adsbot.html)": {"Google special-case crawlers", VerifyIPRanges, false, false},
 		"Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0 Mobile Safari/537.36 (compatible; AdsBot-Google-Mobile; +http://www.google.com/mobile/adsbot.html)": {"Google special-case crawlers", VerifyIPRanges, false, false},
-		"FeedFetcher-Google; (+http://www.google.com/feedfetcher.html)":                                                        {"Google user-triggered fetchers", VerifyIPRanges, true, true},
-		"Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)":                                             {"Googlebot", VerifyRDNS, false, false},
-		"DuckAssistBot/1.2; (+http://duckduckgo.com/duckassistbot.html)":                                                       {"DuckAssistBot", VerifyIPRanges, false, false},
-		"DuckDuckBot/1.1; (+http://duckduckgo.com/duckduckbot.html)":                                                           {"DuckDuckBot", VerifyIPRanges, false, false},
-		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; MistralAI-User/1.0; +https://docs.mistral.ai/robots)":  {"MistralAI-User", VerifyIPRanges, true, false},
-		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; MistralAI-Index/1.0; +https://docs.mistral.ai/robots)": {"MistralAI-Index", VerifyIPRanges, false, false},
-		"Mozilla/5.0 (compatible; SeznamBot/4.0; +http://napoveda.seznam.cz/seznambot-intro/)":                                 {"SeznamBot", VerifyIPRanges, false, false},
-		"Mozilla/5.0 (compatible; Kagibot/1.0; +https://kagi.com/bot)":                                                         {"Kagibot", VerifyRDNS, false, false},
-		"Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)":                                                   {"AhrefsBot", VerifyRDNS, false, false},
-		"Mozilla/5.0 (compatible; AhrefsSiteAudit/6.1; +http://ahrefs.com/robot/site-audit)":                                   {"AhrefsSiteAudit", VerifyRDNS, false, false},
-		"Mozilla/5.0 (compatible; SERankingBacklinksBot/1.0; +https://seranking.com/backlinks-crawler)":                        {"SERankingBacklinksBot", VerifyRDNS, false, false},
-		"Mozilla/5.0 (compatible; SEBot-WA/1.0)":                                                                               {"SEBot-WA", VerifyRDNS, false, false},
+		"FeedFetcher-Google; (+http://www.google.com/feedfetcher.html)":                                                         {"Google user-triggered fetchers", VerifyIPRanges, true, true},
+		"Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)":                                              {"Googlebot", VerifyRDNS, false, false},
+		"DuckAssistBot/1.2; (+http://duckduckgo.com/duckassistbot.html)":                                                        {"DuckAssistBot", VerifyIPRanges, false, false},
+		"DuckDuckBot/1.1; (+http://duckduckgo.com/duckduckbot.html)":                                                            {"DuckDuckBot", VerifyIPRanges, false, false},
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; MistralAI-User/1.0; +https://docs.mistral.ai/robots)":   {"MistralAI-User", VerifyIPRanges, true, false},
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; MistralAI-Index/1.0; +https://docs.mistral.ai/robots)":  {"MistralAI-Index", VerifyIPRanges, false, false},
+		"Mozilla/5.0 (compatible; SeznamBot/4.0; +http://napoveda.seznam.cz/seznambot-intro/)":                                  {"SeznamBot", VerifyIPRanges, false, false},
+		"Mozilla/5.0 (compatible; Kagibot/1.0; +https://kagi.com/bot)":                                                          {"Kagibot", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)":                                                    {"AhrefsBot", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; AhrefsSiteAudit/6.1; +http://ahrefs.com/robot/site-audit)":                                    {"AhrefsSiteAudit", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; SERankingBacklinksBot/1.0; +https://seranking.com/backlinks-crawler)":                         {"SERankingBacklinksBot", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; SEBot-WA/1.0)":                                                                                {"SEBot-WA", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; GoogleOther)":                                                                                 {"Google common crawlers", VerifyRDNS, false, false},
+		"GoogleOther-Image/1.0":                                                                                                 {"Google common crawlers", VerifyRDNS, false, false},
+		"Mozilla/5.0 (X11; Linux x86_64; Storebot-Google/1.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0 Safari/537.36": {"Google common crawlers", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; Google-InspectionTool/1.0;)":                                                                  {"Google common crawlers", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)":                                               {"Bingbot", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; adidxbot/2.0; +http://www.bing.com/bingbot.htm)":                                              {"Bingbot", VerifyRDNS, false, false},
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) BingPreview/1.0b":                     {"Bingbot", VerifyRDNS, false, false},
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0 Safari/537.36 Edg/112.0 MicrosoftPreview/2.0 +https://aka.ms/MicrosoftPreview":                       {"MicrosoftPreview", VerifyNone, false, false},
+		"facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)":                                                                                                                         {"facebookexternalhit", VerifyNone, false, false},
+		"Mozilla/5.0 (compatible; FacebookBot/1.0; +https://developers.facebook.com/docs/sharing/webmasters/facebookbot/)":                                                                                  {"FacebookBot", VerifyNone, false, false},
+		"Mozilla/5.0 (compatible; YandexBot/3.0; +http://yandex.com/bots)":                                                                                                                                  {"YandexBot", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; YandexImages/3.0; +http://yandex.com/bots)":                                                                                                                               {"YandexBot", VerifyRDNS, false, false},
+		"Mozilla/5.0 (iPhone; CPU iPhone OS 8_1 like Mac OS X) AppleWebKit/600.1.4 (KHTML, like Gecko) Version/8.0 Mobile/12B411 Safari/600.1.4 (compatible; YandexMobileBot/3.0; +http://yandex.com/bots)": {"YandexBot", VerifyRDNS, false, false},
 	} {
 		c := MatchUA(cs, ua)
 		if c == nil || c.Name != want.name || c.Verify.Method != want.method || c.UserTriggered != want.userTriggered || c.RobotsExempt != want.exempt {
 			t.Errorf("%.60s: got %+v", ua, c)
+		}
+	}
+	// Yandex's apps and browser are not Yandex's robots.
+	for _, ua := range []string{
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 YaBrowser/24.1.0 Safari/537.36",
+		"Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 YandexSearch/24.10 Mobile Safari/537.36",
+	} {
+		if c := MatchUA(cs, ua); c != nil {
+			t.Errorf("%.60s matched %q", ua, c.Name)
 		}
 	}
 	// The Google entries use every Google list, and every list is fetched.
