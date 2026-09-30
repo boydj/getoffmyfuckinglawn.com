@@ -58,6 +58,7 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **Writer: a failed batch is counted in `Errors` and dropped, not retried.** Memory stays bounded if SQLite is unavailable.
 - **Rollup commits one transaction per UTC day.** Transactions stay bounded; a session continuing across midnight isn't double counted.
 - **PruneIdentities never deletes identities still referenced by raw rows or aggregates.** Rolled-up history keeps its labels.
+- **A cached identity is re-classified as soon as crawlers.yaml gives its user agent a different org, whatever its age.** Otherwise a newly added crawler (ShapBot) stays "anonymous" on the wall for up to `identity_ttl`. Both the live classifier and `lawn verify-refresh` compare the stored `claimed_org` with the current match. As with stale rows, only pairs with raw requests are redone, and rolled-up history keeps its label.
 - **`config.Validate()` is exported, and `app.New` calls it.** A hand-built `Config` (e.g. `config.Default()`) previously left `Proxies` unparsed, which silently ignored X-Forwarded-For. The integration test caught it.
 - **`lawn gen-robots` loads the config before printing.** Deploy uses it as a pre-swap sanity check, so it now also proves the config parses.
 - **`lawn verify-refresh` force-refetches every range list (`RefreshAll`).** It's the daily timer's job; the in-process loop only refetches stale lists.
