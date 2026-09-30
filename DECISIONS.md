@@ -291,3 +291,36 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 ## ShapBot (Parallel) (follow-up)
 
 - **Added as a known crawler** with `ip_ranges` from `https://docs.parallel.ai/resources/shapbot.json`, the list Parallel's crawler page links ("For the complete list of ShapBot IPs, see shapbot.json"). docs.parallel.ai is blocked from the build sandbox, so the operator fetched the file directly (2026-09-30). It uses the Google-style `prefixes`/`ipv4Prefix` format the range parser already reads: ten IPv4 /32s, no IPv6.
+
+## More verified crawlers from vendor lists (follow-up)
+
+- **Aggregators find lists; vendors remain the source.** Public projects that track official crawler IP lists were used to find vendor lists we didn't use yet: ipverse/bot-ip-blocks (CC0, with UA patterns and an "authoritative" flag), ondrejnov/bot-ips and ramhee98/ai-crawler-ipranges (MIT).
+  - **Runtime:** the server still fetches only each vendor's own URL. An aggregator's copy of the addresses, if stale or tampered with, would call real crawlers spoofers or pass fakes.
+  - **Rejected lists:** the ASN-derived lists some aggregators carry for Meta and Yandex are not used. Anything hosted in those networks would pass as the crawler.
+  - **Checking:** each entry was checked against the vendor's own page (web search restricted to the vendor's domain; direct fetches were blocked from the build sandbox).
+  - **User agents:** the aggregators' user-agent-to-family mappings were not trusted. ipverse files FeedFetcher-Google under special-case crawlers, while Google puts it in the user-triggered lists.
+- **Added entries:**
+
+  | Entry | Verification | Notes |
+  |---|---|---|
+  | Google special-case crawlers | IP lists | |
+  | Google user-triggered fetchers | IP lists | user-triggered and robots-exempt, per Google's own wording |
+  | DuckAssistBot, DuckDuckBot | IP lists | |
+  | MistralAI-User | IP list | user-triggered, not exempt |
+  | MistralAI-Index | IP list | |
+  | SeznamBot | IP list | |
+  | Kagibot | rDNS `kagibot.org` | |
+  | AhrefsBot, AhrefsSiteAudit | rDNS `ahrefs.com`/`ahrefs.net` | |
+  | SEBot-WA | rDNS `sr-srv.net` | |
+  | SERankingBacklinksBot | rDNS `seranking.com` | |
+
+  SEO bots are included at the operator's request, under the same rules.
+- **Google's non-Googlebot agents are verified against the union of Google's five lists** (`verify.urls`, new): special-crawlers, user-triggered-fetchers, user-triggered-fetchers-google, user-triggered-agents and common-crawlers.
+  - **Why the union:** Google's per-family tables could not be read in full from the sandbox. With the union, a user agent filed under the wrong family can't produce a false "spoofed".
+  - **Rules:** an address in any list verifies. It is spoofed only when every list is known and none contains it; a missing list leaves it undecided.
+  - **Not reverse DNS:** `googleusercontent.com` includes customers' Google Cloud machines.
+- **Seznam uses its list, not reverse DNS.** Seznam's page says its addresses have reverse DNS but not under which domain. A wrong guess would publicly call the real SeznamBot a spoofer; a wrong or missing list only leaves it unverifiable.
+- **Two TODOs to confirm on the host with `lawn verify-refresh`:**
+  - Mistral's two list URLs (from ramhee98's registry; Mistral's page has the sections but they weren't visible in search).
+  - Seznam's list.
+- **`make crawlers-check`** (`tools/crawlerscheck`) compares `crawlers.yaml` with the ipverse and ondrejnov catalogues. It lists vendor lists we don't use and user agents no entry matches, and marks lists that aren't vendor-published and services our entries already cover. It only reports leads; nothing is added without the vendor's documentation.

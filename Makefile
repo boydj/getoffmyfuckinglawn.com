@@ -129,6 +129,10 @@ onion-backup: keys-backup ## Alias for keys-backup
 
 ## ---------------------------------------------------------------- Dev
 
+crawlers-check: ## Compare config/crawlers.yaml with public catalogues of vendor IP lists (leads only)
+	$(GO) run ./tools/crawlerscheck -crawlers config/crawlers.yaml
+
+
 loadtest: ## Run the load test (tools/); pass options via LOADTEST_ARGS
 	@if [ -x tools/loadtest.sh ]; then tools/loadtest.sh $(LOADTEST_ARGS); \
 		else $(GO) run ./tools/loadtest $(LOADTEST_ARGS); fi

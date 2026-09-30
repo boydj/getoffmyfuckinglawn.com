@@ -500,3 +500,53 @@ func TestRecordHostPTR(t *testing.T) {
 		t.Error("stale host row was not refreshed")
 	}
 }
+
+// An entry with several lists: an address in any one of them verifies; an
+// address in none is spoofed only when every list is known.
+func TestClassifySeveralLists(t *testing.T) {
+	cs, err := ParseCrawlers([]byte(`
+- org: Multi Co
+  name: MultiBot
+  ua_patterns: ['\bMultiBot\b']
+  verify: {method: ip_ranges, url: "https://multi.example/a.json", urls: ["https://multi.example/b.json"]}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := RangeURLs(cs); len(got) != 2 {
+		t.Fatalf("RangeURLs: %v", got)
+	}
+	ctx := context.Background()
+	ff := &fakeFetcher{body: map[string]string{
+		"https://multi.example/a.json": `{"prefixes":[{"ipv4Prefix":"192.0.2.0/28"}]}`,
+		"https://multi.example/b.json": `{"prefixes":[{"ipv4Prefix":"198.51.100.0/28"}]}`,
+	}}
+	rs := NewRangeStore(RangeOptions{Crawlers: cs, Fetcher: ff.fetch})
+	if err := rs.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c := NewClassifier(Options{Crawlers: cs, Ranges: rs, Resolver: newTestResolver()})
+	for ip, want := range map[string]string{
+		"192.0.2.3":    logstore.StatusVerified, // first list
+		"198.51.100.3": logstore.StatusVerified, // second list
+		"203.0.113.3":  logstore.StatusSpoofed,  // neither, both known
+	} {
+		if id := c.Classify(ctx, ip, "MultiBot/1.0"); id.Status != want {
+			t.Errorf("%s: %s, want %s", ip, id.Status, want)
+		}
+	}
+	// The second list never loaded: a miss in the first is undecided.
+	ff2 := &fakeFetcher{body: map[string]string{"https://multi.example/a.json": `{"prefixes":[{"ipv4Prefix":"192.0.2.0/28"}]}`}}
+	rs2 := NewRangeStore(RangeOptions{Crawlers: cs, Fetcher: ff2.fetch})
+	rs2.Refresh(ctx)
+	c2 := NewClassifier(Options{Crawlers: cs, Ranges: rs2, Resolver: newTestResolver()})
+	if id, err := c2.ClassifyDetailed(ctx, "203.0.113.3", "MultiBot/1.0"); !errors.Is(err, ErrIndeterminate) || id.Status != logstore.StatusUnverifiable {
+		t.Errorf("partial lists: %+v %v", id, err)
+	}
+	if id := c2.Classify(ctx, "192.0.2.3", "MultiBot/1.0"); id.Status != logstore.StatusVerified {
+		t.Errorf("a hit in a known list verifies even if another is missing: %s", id.Status)
+	}
+	if _, err := ParseCrawlers([]byte("- {org: X, name: X, ua_patterns: ['x'], verify: {method: ip_ranges, urls: [\"ftp://x\"]}}")); err == nil {
+		t.Error("bad url in urls must be rejected")
+	}
+}

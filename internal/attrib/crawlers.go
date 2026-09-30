@@ -24,7 +24,16 @@ type VerifySpec struct {
 	Method  string   `yaml:"method"`  // rdns | ip_ranges | none
 	Domains []string `yaml:"domains"` // rdns: PTR must be one of these or a subdomain
 	URL     string   `yaml:"url"`     // ip_ranges: vendor JSON or text list
+	URLs    []string `yaml:"urls"`    // ip_ranges: several lists; an address in any one verifies
 	CIDRs   []string `yaml:"cidrs"`   // ip_ranges: static prefixes
+}
+
+// Lists returns every vendor list URL the spec names (url, then urls).
+func (v VerifySpec) Lists() []string {
+	if v.URL == "" {
+		return v.URLs
+	}
+	return append([]string{v.URL}, v.URLs...)
 }
 
 // UnmarshalYAML accepts either a mapping or a bare method string
@@ -133,13 +142,13 @@ func buildCrawler(r crawlerYAML) (Crawler, error) {
 			v.Domains[i] = d
 		}
 	case VerifyIPRanges:
-		if v.URL == "" && len(v.CIDRs) == 0 {
-			return c, errors.New("verify ip_ranges needs url or cidrs")
+		if len(v.Lists()) == 0 && len(v.CIDRs) == 0 {
+			return c, errors.New("verify ip_ranges needs url, urls or cidrs")
 		}
-		if v.URL != "" {
-			u, err := url.Parse(v.URL)
+		for _, l := range v.Lists() {
+			u, err := url.Parse(l)
 			if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-				return c, fmt.Errorf("verify ip_ranges: bad url %q", v.URL)
+				return c, fmt.Errorf("verify ip_ranges: bad url %q", l)
 			}
 		}
 		var pfx []netip.Prefix
@@ -180,9 +189,14 @@ func RangeURLs(crawlers []Crawler) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, c := range crawlers {
-		if c.Verify.Method == VerifyIPRanges && c.Verify.URL != "" && !seen[c.Verify.URL] {
-			seen[c.Verify.URL] = true
-			out = append(out, c.Verify.URL)
+		if c.Verify.Method != VerifyIPRanges {
+			continue
+		}
+		for _, l := range c.Verify.Lists() {
+			if !seen[l] {
+				seen[l] = true
+				out = append(out, l)
+			}
 		}
 	}
 	return out

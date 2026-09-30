@@ -86,6 +86,7 @@ make lint        # vet + gofmt + shellcheck + tofu fmt
 make validate    # tofu fmt -check + tofu validate (no credentials needed)
 make run         # serve on 127.0.0.1:8080 (admin :9090, gopher :7070, gemini :1965) with throwaway state in data/dev
 make loadtest    # 5000 slow connections against a local server; see tools/loadtest.sh
+make crawlers-check  # compare config/crawlers.yaml with public catalogues of vendor IP lists (leads only)
 ```
 
 `make run` uses no ASN file, so ASN attribution is off locally. For a quick walk through the maze:
