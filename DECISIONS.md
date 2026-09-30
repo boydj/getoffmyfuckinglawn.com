@@ -320,7 +320,5 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
   - **Rules:** an address in any list verifies. It is spoofed only when every list is known and none contains it; a missing list leaves it undecided.
   - **Not reverse DNS:** `googleusercontent.com` includes customers' Google Cloud machines.
 - **Seznam uses its list, not reverse DNS.** Seznam's page says its addresses have reverse DNS but not under which domain. A wrong guess would publicly call the real SeznamBot a spoofer; a wrong or missing list only leaves it unverifiable.
-- **Two TODOs to confirm on the host with `lawn verify-refresh`:**
-  - Mistral's two list URLs (from ramhee98's registry; Mistral's page has the sections but they weren't visible in search).
-  - Seznam's list.
+- **Mistral's and Seznam's lists** were found through ramhee98's registry and ondrejnov's source list, because Mistral's and Seznam's pages were not fully visible from the sandbox. The operator fetched all three files directly (2026-09-30): each is a Google-style `ipv4Prefix` list served from the vendor's own domain.
 - **`make crawlers-check`** (`tools/crawlerscheck`) compares `crawlers.yaml` with the ipverse and ondrejnov catalogues. It lists vendor lists we don't use and user agents no entry matches, and marks lists that aren't vendor-published and services our entries already cover. It only reports leads; nothing is added without the vendor's documentation.

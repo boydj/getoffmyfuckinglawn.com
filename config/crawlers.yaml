@@ -260,11 +260,12 @@
 # fetches pages "for user actions" and is "not used for crawling the web in
 # any automatic fashion"; MistralAI-Index crawls for Mistral's search index.
 # The page publishes "MistralAI-User IP addresses" and "MistralAI-Index IP
-# addresses". TODO: the list URLs below come from the ai-crawler-ipranges
-# registry (github.com/ramhee98/ai-crawler-ipranges), which fetches them
-# daily; docs.mistral.ai was blocked from the build sandbox, so confirm they
-# are the ones the page links. The page does not say robots.txt may not
-# apply, so MistralAI-User is user-triggered but not exempt.
+# addresses". The list URLs below were found via the ai-crawler-ipranges
+# registry (github.com/ramhee98/ai-crawler-ipranges) because docs.mistral.ai
+# was blocked from the build sandbox; the operator fetched both from
+# mistral.ai on 2026-09-30 (Google-style ipv4Prefix lists). The page does not
+# say robots.txt may not apply, so MistralAI-User is user-triggered but not
+# exempt.
 - org: Mistral AI
   name: MistralAI-User
   ua_patterns: ['\bMistralAI-User\b']
@@ -281,8 +282,8 @@
 # Seznam says every SeznamBot address has a reverse DNS record, but not
 # which domain it ends in, so rDNS is not used (a wrong guess would call
 # the real SeznamBot a spoofer). Seznam publishes the list below on its own
-# search domain (same schema as Google's). TODO: the docs page as found did
-# not link it; confirm on the host with lawn verify-refresh.
+# search domain (same schema as Google's); the operator fetched it on
+# 2026-09-30 (ipv4Prefix /32s).
 - org: Seznam.cz
   name: SeznamBot
   ua_patterns: ['\bSeznamBot\b']
