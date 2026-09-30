@@ -248,10 +248,21 @@ func (c *Classifier) handle(ctx context.Context, ip, ua string) {
 		c.errs.Add(1)
 		return
 	}
-	if ok && c.now().Sub(time.UnixMilli(old.CheckedAt)) < c.ttl {
+	if ok && c.now().Sub(time.UnixMilli(old.CheckedAt)) < c.ttl && !c.claimChanged(old) {
 		return
 	}
 	c.classifyAndStore(ctx, ip, ua, old, ok)
+}
+
+// claimChanged reports whether crawlers.yaml now gives id's user agent a
+// different claimed org than the one stored: a crawler added, removed or
+// renamed since. Such an identity is re-classified however fresh it is.
+func (c *Classifier) claimChanged(id logstore.Identity) bool {
+	org := ""
+	if cr := MatchUA(c.crawlerList(), id.UserAgent); cr != nil {
+		org = cr.Org
+	}
+	return org != id.ClaimedOrg
 }
 
 // classifyAndStore classifies and upserts, applying the indeterminate
@@ -424,8 +435,9 @@ func (c *Classifier) verifyRDNS(ctx context.Context, a netip.Addr, domains []str
 }
 
 // ReverifyStale is the `lawn verify-refresh` pass: it re-classifies
-// identities older than TTL that still have raw requests (history that was
-// rolled up keeps the status it had), and classifies every (ip,
+// identities that still have raw requests (history that was rolled up keeps
+// the status it had) and are older than TTL or whose user agent crawlers.yaml
+// now attributes to a different org, and classifies every (ip,
 // user_agent) in requests that has no identity yet, violator or not, so
 // well-behaved bots are labelled too. Each job also refreshes the IP's
 // reverse DNS when the store keeps hosts. Work is spread over
@@ -442,8 +454,8 @@ func (c *Classifier) ReverifyStale(ctx context.Context, db *sql.DB) (int, error)
 	}
 	var jobs []job
 	rows, err := db.QueryContext(ctx, `SELECT ip, user_agent, COALESCE(claimed_org, ''), status, COALESCE(method, ''), checked_at
-	 FROM identities i WHERE checked_at < ?
-	 AND EXISTS (SELECT 1 FROM requests r WHERE r.ip = i.ip AND COALESCE(r.user_agent, '') = i.user_agent)`, cutoff)
+	 FROM identities i
+	 WHERE EXISTS (SELECT 1 FROM requests r WHERE r.ip = i.ip AND COALESCE(r.user_agent, '') = i.user_agent)`)
 	if err != nil {
 		return 0, fmt.Errorf("attrib: reverify: %w", err)
 	}
@@ -452,6 +464,9 @@ func (c *Classifier) ReverifyStale(ctx context.Context, db *sql.DB) (int, error)
 		if err := rows.Scan(&id.IP, &id.UserAgent, &id.ClaimedOrg, &id.Status, &id.Method, &id.CheckedAt); err != nil {
 			rows.Close()
 			return 0, fmt.Errorf("attrib: reverify: %w", err)
+		}
+		if id.CheckedAt >= cutoff && !c.claimChanged(id) {
+			continue
 		}
 		jobs = append(jobs, job{pair{id.IP, id.UserAgent}, id, true})
 	}

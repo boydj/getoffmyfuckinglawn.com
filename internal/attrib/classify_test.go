@@ -309,7 +309,9 @@ func TestRunTTLSkipAndStore(t *testing.T) {
 		Method: logstore.MethodRDNS, CheckedAt: clk.Now().Add(-ttl - time.Hour).UnixMilli()}
 	staleTimeout := logstore.Identity{IP: "192.0.2.51", UserAgent: gb, ClaimedOrg: "Google", Status: logstore.StatusVerified,
 		Method: logstore.MethodRDNS, CheckedAt: clk.Now().Add(-ttl - time.Hour).UnixMilli()}
-	for _, id := range []logstore.Identity{fresh, stale, staleTimeout} {
+	relisted := logstore.Identity{IP: "192.0.2.12", UserAgent: gb, Status: logstore.StatusAnonymous,
+		Method: logstore.MethodNone, CheckedAt: clk.Now().Add(-time.Hour).UnixMilli()}
+	for _, id := range []logstore.Identity{fresh, stale, staleTimeout, relisted} {
 		st.UpsertIdentity(context.Background(), id)
 	}
 	st.puts.Store(0)
@@ -325,9 +327,10 @@ func TestRunTTLSkipAndStore(t *testing.T) {
 	c.Observe(staleTimeout.IP, gb) // stale + DNS failure: old row kept
 	c.Observe("192.0.2.50", gb)    // new + DNS timeout: unverifiable, retry soon
 	c.Observe("192.0.2.99", "Mozilla/5.0")
+	c.Observe(relisted.IP, gb) // fresh but anonymous before Googlebot was listed: re-matched
 
 	deadline := time.Now().Add(5 * time.Second)
-	for c.Stats().Classified < 4 || st.puts.Load() < 3 {
+	for c.Stats().Classified < 5 || st.puts.Load() < 4 {
 		if time.Now().After(deadline) {
 			t.Fatalf("timeout: %+v puts=%d", c.Stats(), st.puts.Load())
 		}
@@ -353,11 +356,14 @@ func TestRunTTLSkipAndStore(t *testing.T) {
 	if got, _ := st.get("192.0.2.99", "Mozilla/5.0"); got.Status != logstore.StatusAnonymous {
 		t.Errorf("anonymous: %+v", got)
 	}
-	if st.puts.Load() != 3 {
-		t.Errorf("puts=%d want 3", st.puts.Load())
+	if got, _ := st.get(relisted.IP, gb); got.ClaimedOrg != "Google" || got.Status == logstore.StatusAnonymous {
+		t.Errorf("relisted: %+v", got)
 	}
-	if c.Stats().Classified != 4 {
-		t.Errorf("classified=%d want 4 (fresh one skipped)", c.Stats().Classified)
+	if st.puts.Load() != 4 {
+		t.Errorf("puts=%d want 4", st.puts.Load())
+	}
+	if c.Stats().Classified != 5 {
+		t.Errorf("classified=%d want 5 (fresh one skipped)", c.Stats().Classified)
 	}
 }
 
@@ -380,6 +386,8 @@ func TestReverifyStale(t *testing.T) {
 		mk("192.0.2.11", gb, true),         // B: stale identity -> reclassify
 		mk("192.0.2.99", "Firefox", false), // C: non-violator, no identity -> classify (anonymous)
 		mk("192.0.2.12", "NoneBot", true),  // E: fresh identity -> skip
+		mk("192.0.2.13", gb, false),        // F: fresh, anonymous before Googlebot was listed -> reclassify
+		mk("192.0.2.14", "Firefox", false), // G: fresh, claimed an org whose entry was since removed -> reclassify
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +395,9 @@ func TestReverifyStale(t *testing.T) {
 	for _, id := range []logstore.Identity{
 		{IP: "192.0.2.11", UserAgent: gb, Status: logstore.StatusSpoofed, Method: logstore.MethodRDNS, CheckedAt: old},
 		{IP: "192.0.2.77", UserAgent: gb, Status: logstore.StatusSpoofed, Method: logstore.MethodRDNS, CheckedAt: old}, // D: no raw requests
-		{IP: "192.0.2.12", UserAgent: "NoneBot", Status: logstore.StatusUnverifiable, Method: logstore.MethodNone, CheckedAt: now},
+		{IP: "192.0.2.12", UserAgent: "NoneBot", ClaimedOrg: "None Co", Status: logstore.StatusUnverifiable, Method: logstore.MethodNone, CheckedAt: now},
+		{IP: "192.0.2.13", UserAgent: gb, Status: logstore.StatusAnonymous, Method: logstore.MethodNone, CheckedAt: now},
+		{IP: "192.0.2.14", UserAgent: "Firefox", ClaimedOrg: "Gone Co", Status: logstore.StatusUnverifiable, Method: logstore.MethodNone, CheckedAt: now},
 	} {
 		if err := s.UpsertIdentity(ctx, id); err != nil {
 			t.Fatal(err)
@@ -398,8 +408,8 @@ func TestReverifyStale(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 3 {
-		t.Fatalf("n=%d want 3", n)
+	if n != 5 {
+		t.Fatalf("n=%d want 5", n)
 	}
 	if id, ok, _ := s.GetIdentity(ctx, "192.0.2.10", gb); !ok || id.Status != logstore.StatusVerified {
 		t.Errorf("A: %+v %v", id, ok)
@@ -414,6 +424,14 @@ func TestReverifyStale(t *testing.T) {
 	// PTR for 192.0.2.99, which is cached as "").
 	if _, ok, _ := s.GetHost(ctx, "192.0.2.99"); !ok {
 		t.Error("C: host row not recorded")
+	}
+	// A crawlers.yaml change reaches cached identities without waiting out
+	// the TTL.
+	if id, _, _ := s.GetIdentity(ctx, "192.0.2.13", gb); id.Status != logstore.StatusSpoofed || id.ClaimedOrg != "Google" {
+		t.Errorf("F: newly listed crawler not re-matched: %+v", id)
+	}
+	if id, _, _ := s.GetIdentity(ctx, "192.0.2.14", "Firefox"); id.Status != logstore.StatusAnonymous || id.ClaimedOrg != "" {
+		t.Errorf("G: removed crawler not re-matched: %+v", id)
 	}
 	if id, _, _ := s.GetIdentity(ctx, "192.0.2.77", gb); id.CheckedAt != old {
 		t.Errorf("D touched: %+v", id)
