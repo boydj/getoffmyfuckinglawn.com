@@ -290,7 +290,4 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 
 ## ShapBot (Parallel) (follow-up)
 
-- **Added as a known crawler** with `ip_ranges` from `https://docs.parallel.ai/resources/shapbot.json`, the list Parallel's crawler page links ("For the complete list of ShapBot IPs, see shapbot.json").
-  - **Sources:** the operator quoted that page, and search results indexing it agree on the user agent and the URL. docs.parallel.ai itself was blocked from the build sandbox, so the entry carries a TODO to confirm it on the host.
-  - **Failure mode:** a wrong URL or an unreadable file can only leave ShapBot "claimed, unverifiable", never falsely verified.
-- **JSON IP lists with no CIDRs are read as bare addresses** (/32 or /128). ShapBot's addresses are quoted as bare IPs, and the parser used to ignore bare addresses in JSON, which would have left ShapBot unverifiable forever. In a list that has any CIDR, bare addresses are still ignored as likely metadata.
+- **Added as a known crawler** with `ip_ranges` from `https://docs.parallel.ai/resources/shapbot.json`, the list Parallel's crawler page links ("For the complete list of ShapBot IPs, see shapbot.json"). docs.parallel.ai is blocked from the build sandbox, so the operator fetched the file directly (2026-09-30). It uses the Google-style `prefixes`/`ipv4Prefix` format the range parser already reads: ten IPv4 /32s, no IPv6.

@@ -73,23 +73,6 @@ func TestParsePrefixesJSON(t *testing.T) {
 	}
 }
 
-// A JSON list of bare addresses (no CIDR anywhere) is read as /32s and
-// /128s; in a CIDR list, bare addresses stay ignored (see above).
-func TestParsePrefixesJSONBareAddresses(t *testing.T) {
-	doc := `{"creationTime": "2026-09-30", "ips": ["192.0.2.10", " 198.51.100.7 ", "2001:db8::5", "not-an-ip", "fe80::1%eth0"]}`
-	got, err := ParsePrefixes([]byte(doc))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"192.0.2.10/32", "198.51.100.7/32", "2001:db8::5/128"}
-	if g := prefixStrings(got); !slices.Equal(g, want) {
-		t.Fatalf("got %v want %v", g, want)
-	}
-	if _, err := ParsePrefixes([]byte(`{"version": "1.0", "count": 0}`)); err == nil {
-		t.Error("a list with no addresses must still be an error")
-	}
-}
-
 func TestParsePrefixesText(t *testing.T) {
 	txt := "# vendor list\n\n192.0.2.0/24\n  2001:db8::/32  # trailing comment\n198.51.100.9\nnot-an-ip\r\n203.0.113.0/24\r\n"
 	got, err := ParsePrefixes([]byte(txt))

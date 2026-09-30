@@ -104,10 +104,9 @@
 # compatible; ShapBot/0.1.0", and "for the complete list of ShapBot IPs, see
 # shapbot.json" at docs.parallel.ai/resources/shapbot.json. The page asks
 # sites to allow ShapBot in robots.txt, i.e. it follows robots.txt.
-# TODO: docs.parallel.ai was unreachable from the build sandbox (2026-09-30);
-# the URL is taken from the operator (quoting the page) and search results
-# indexing that page. Confirm it on the host: lawn verify-refresh logs how
-# many prefixes each list yields.
+# The list was confirmed by the operator on 2026-09-30 (fetched directly;
+# docs.parallel.ai is blocked from the build sandbox): Google-style
+# {"prefixes":[{"ipv4Prefix":"x.x.x.x/32"}]}, IPv4 only.
 - org: Parallel Web Systems
   name: ShapBot
   ua_patterns: ['\bShapBot\b']
