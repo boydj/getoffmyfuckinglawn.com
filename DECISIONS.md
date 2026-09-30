@@ -323,3 +323,27 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **Seznam uses its list, not reverse DNS.** Seznam's page says its addresses have reverse DNS but not under which domain. A wrong guess would publicly call the real SeznamBot a spoofer; a wrong or missing list only leaves it unverifiable.
 - **Mistral's and Seznam's lists** were found through ramhee98's registry and ondrejnov's source list, because Mistral's and Seznam's pages were not fully visible from the sandbox. The operator fetched all three files directly (2026-09-30): each is a Google-style `ipv4Prefix` list served from the vendor's own domain.
 - **`make crawlers-check`** (`tools/crawlerscheck`) compares `crawlers.yaml` with the ipverse and ondrejnov catalogues. It lists vendor lists we don't use and user agents no entry matches, and marks lists that aren't vendor-published and services our entries already cover. It only reports leads; nothing is added without the vendor's documentation.
+
+## Crawlers from the first `make crawlers-check` run
+
+- **Added.** Each check was confirmed via search restricted to the vendor's domain, because the vendors' pages are blocked from the sandbox.
+
+  | Agent | Verified by | Source |
+  |---|---|---|
+  | GoogleOther (and -Image, -Video), Storebot-Google, Google-InspectionTool | rDNS `googlebot.com`, as Googlebot | Google's common crawlers page |
+  | adidxbot, msnbot, BingPreview | added to the Bingbot entry: rDNS `search.msn.com` | Microsoft names the four bots and one check |
+  | YandexBot and ten sibling robots | rDNS `yandex.ru`/`yandex.net`/`yandex.com` | Yandex's "check that a robot belongs to Yandex" page |
+  | facebookexternalhit, FacebookBot | none (TODO) | Meta publishes only its ASN |
+  | MicrosoftPreview | none (TODO) | only third-party pages describe it |
+
+- **Yandex's robots are named one by one, not matched as `Yandex*`.** A catch-all would also match Yandex's apps and browser, whose users would then be called spoofers.
+- **Left out on purpose:**
+  - **Chrome-Lighthouse:** Lighthouse also runs in anyone's Chrome DevTools and CI, so checking it against Google's lists would call those developers spoofers.
+  - **DuplexWeb-Google:** Google shut the service down.
+  - Both are listed in `crawlerscheck`'s `declined` map so they stop coming up as leads.
+- **Google Publisher Center is `GoogleProducer`**, added to the user-triggered fetchers. The operator read the tokens off Google's user-triggered fetchers page (2026-09-30), which names `GoogleProducer` and `Google-Agent`. The catalogues' "GoogleAgent-Mariner" is not on it, so it is declined; `Google-Agent` was already matched.
+- **`make crawlers-check` now prints real leads first**, then an "already covered or unusable" section. Settled means one of:
+  - an entry already matches the list's user agents or its catalogue name (ondrejnov names lists after the bot);
+  - the catalogue lists a shortened token our pattern contains (`NotebookLM`);
+  - the list isn't vendor-published;
+  - the user agent was declined above.
