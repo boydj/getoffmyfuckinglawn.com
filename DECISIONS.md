@@ -341,7 +341,7 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
   - **Chrome-Lighthouse:** Lighthouse also runs in anyone's Chrome DevTools and CI, so checking it against Google's lists would call those developers spoofers.
   - **DuplexWeb-Google:** Google shut the service down.
   - Both are listed in `crawlerscheck`'s `declined` map so they stop coming up as leads.
-- **Still TODO:** GoogleAgent-Mariner and the "Google Publisher Center" fetcher. Their user-agent tokens have to be read on Google's user-triggered fetchers page itself before they go in.
+- **Google Publisher Center is `GoogleProducer`**, added to the user-triggered fetchers. The operator read the tokens off Google's user-triggered fetchers page (2026-09-30), which names `GoogleProducer` and `Google-Agent`. The catalogues' "GoogleAgent-Mariner" is not on it, so it is declined; `Google-Agent` was already matched.
 - **`make crawlers-check` now prints real leads first**, then an "already covered or unusable" section. Settled means one of:
   - an entry already matches the list's user agents or its catalogue name (ondrejnov names lists after the bot);
   - the catalogue lists a shortened token our pattern contains (`NotebookLM`);

@@ -31,10 +31,13 @@ const (
 )
 
 // declined lists catalogue user agents deliberately left out of
-// crawlers.yaml, with the reason (see DECISIONS.md).
+// crawlers.yaml, or that are not user agents at all, with the reason (see
+// DECISIONS.md).
 var declined = map[string]string{
-	"Chrome-Lighthouse": "left out: Lighthouse also runs in anyone's DevTools and CI",
-	"DuplexWeb-Google":  "left out: Google shut Duplex on the web down",
+	"Chrome-Lighthouse":       "left out: Lighthouse also runs in anyone's DevTools and CI",
+	"DuplexWeb-Google":        "left out: Google shut Duplex on the web down",
+	"GoogleAgent-Mariner":     "not on Google's user-triggered fetchers page, which names Google-Agent",
+	"Google Publisher Center": "a product name; its user agent GoogleProducer is matched",
 }
 
 type ipverseDoc struct {

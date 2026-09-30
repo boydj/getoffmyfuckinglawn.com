@@ -192,14 +192,14 @@
 # fetchers generally ignore robots.txt rules" (user-triggered fetchers page).
 - org: Google
   name: Google user-triggered fetchers
-  # TODO: catalogues also list GoogleAgent-Mariner (Project Mariner) and a
-  # "Google Publisher Center" fetcher; add their tokens once they are read
-  # on the user-triggered fetchers page itself (checked via search only,
-  # 2026-09-30). Chrome-Lighthouse is left out on purpose: Lighthouse also
-  # runs in anyone's Chrome DevTools and CI, so a Google-list check would
-  # brand those users as spoofers.
+  # GoogleProducer is Google Publisher Center's fetcher. The operator read
+  # both it and Google-Agent off the user-triggered fetchers page (2026-09-30);
+  # the catalogues' "GoogleAgent-Mariner" is not on it. Chrome-Lighthouse is
+  # left out on purpose: Lighthouse also runs in anyone's Chrome DevTools and
+  # CI, so a Google-list check would brand those users as spoofers.
   ua_patterns: ['\bFeedFetcher-Google\b', '\bGoogle-Read-Aloud\b', '\bGoogle-Site-Verification\b',
-    '\bGoogle-Pinpoint\b', '\bGoogle-CWS\b', '\bGoogle-NotebookLM\b', '\bGoogle-Agent\b']
+    '\bGoogle-Pinpoint\b', '\bGoogle-CWS\b', '\bGoogle-NotebookLM\b', '\bGoogle-Agent\b',
+    '\bGoogleProducer\b']
   verify:
     method: ip_ranges
     urls:
