@@ -177,3 +177,50 @@ func TestRepoCrawlersShapBot(t *testing.T) {
 		t.Fatalf("ShapBot: %+v", c)
 	}
 }
+
+// Real user agents from the vendors' pages match the right entry; Googlebot
+// is not captured by the broader Google entries.
+func TestRepoCrawlersAdded(t *testing.T) {
+	cs, err := LoadCrawlers("../../config/crawlers.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for ua, want := range map[string]struct {
+		name, method          string
+		userTriggered, exempt bool
+	}{
+		"AdsBot-Google (+http://www.google.com/adsbot.html)": {"Google special-case crawlers", VerifyIPRanges, false, false},
+		"Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0 Mobile Safari/537.36 (compatible; AdsBot-Google-Mobile; +http://www.google.com/mobile/adsbot.html)": {"Google special-case crawlers", VerifyIPRanges, false, false},
+		"FeedFetcher-Google; (+http://www.google.com/feedfetcher.html)":                                                        {"Google user-triggered fetchers", VerifyIPRanges, true, true},
+		"Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)":                                             {"Googlebot", VerifyRDNS, false, false},
+		"DuckAssistBot/1.2; (+http://duckduckgo.com/duckassistbot.html)":                                                       {"DuckAssistBot", VerifyIPRanges, false, false},
+		"DuckDuckBot/1.1; (+http://duckduckgo.com/duckduckbot.html)":                                                           {"DuckDuckBot", VerifyIPRanges, false, false},
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; MistralAI-User/1.0; +https://docs.mistral.ai/robots)":  {"MistralAI-User", VerifyIPRanges, true, false},
+		"Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; MistralAI-Index/1.0; +https://docs.mistral.ai/robots)": {"MistralAI-Index", VerifyIPRanges, false, false},
+		"Mozilla/5.0 (compatible; SeznamBot/4.0; +http://napoveda.seznam.cz/seznambot-intro/)":                                 {"SeznamBot", VerifyIPRanges, false, false},
+		"Mozilla/5.0 (compatible; Kagibot/1.0; +https://kagi.com/bot)":                                                         {"Kagibot", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)":                                                   {"AhrefsBot", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; AhrefsSiteAudit/6.1; +http://ahrefs.com/robot/site-audit)":                                   {"AhrefsSiteAudit", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; SERankingBacklinksBot/1.0; +https://seranking.com/backlinks-crawler)":                        {"SERankingBacklinksBot", VerifyRDNS, false, false},
+		"Mozilla/5.0 (compatible; SEBot-WA/1.0)":                                                                               {"SEBot-WA", VerifyRDNS, false, false},
+	} {
+		c := MatchUA(cs, ua)
+		if c == nil || c.Name != want.name || c.Verify.Method != want.method || c.UserTriggered != want.userTriggered || c.RobotsExempt != want.exempt {
+			t.Errorf("%.60s: got %+v", ua, c)
+		}
+	}
+	// The Google entries use every Google list, and every list is fetched.
+	google := MatchUA(cs, "FeedFetcher-Google")
+	if n := len(google.Verify.Lists()); n != 5 {
+		t.Errorf("Google lists: %d", n)
+	}
+	urls := map[string]bool{}
+	for _, u := range RangeURLs(cs) {
+		urls[u] = true
+	}
+	for _, u := range google.Verify.Lists() {
+		if !urls[u] {
+			t.Errorf("%s not refreshed", u)
+		}
+	}
+}

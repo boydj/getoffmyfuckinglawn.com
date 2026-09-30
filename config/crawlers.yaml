@@ -7,6 +7,8 @@
 #                                    that name must return the client IP
 #   {method: ip_ranges, url: ...}    vendor-published JSON/text list, fetched
 #                                    daily and cached on disk
+#   {method: ip_ranges, urls: [...]} several such lists; an address in any
+#                                    one of them verifies
 #   {method: ip_ranges, cidrs: [...]}
 #   none                             no official method -> "unverifiable"
 #
@@ -15,8 +17,12 @@
 # ones.
 #
 # Every method below was taken from the vendor's own documentation, checked
-# 2026-09-26 (via web search restricted to the vendor's domain; direct page
-# fetches were blocked from the build sandbox). Never add a URL, domain or
+# 2026-09-26 or (for entries added later) 2026-09-30, via web search
+# restricted to the vendor's domain; direct page fetches were blocked from
+# the build sandbox. Aggregators (github.com/ipverse/bot-ip-blocks,
+# ondrejnov/bot-ips, ramhee98/ai-crawler-ipranges) were used only to find
+# vendor lists, never as a source of addresses; `make crawlers-check`
+# compares them with this file. Never add a URL, domain or
 # CIDR that is not in official vendor docs; use `verify: none` + TODO
 # instead.
 
@@ -153,6 +159,52 @@
   verify: {method: rdns, domains: [applebot.apple.com]}
 
 # ---------------------------------------------------------------- Google
+# Google's special-case crawlers and user-triggered fetchers each have a
+# published list under developers.google.com/static/crawling/ipranges/
+# (special-crawlers, user-triggered-fetchers, user-triggered-fetchers-google,
+# user-triggered-agents). Sources:
+# https://developers.google.com/crawling/docs/crawlers-fetchers/google-special-case-crawlers
+# https://developers.google.com/crawling/docs/crawlers-fetchers/google-user-triggered-fetchers
+# https://developers.google.com/crawling/docs/changelog (Google-Agent)
+# Google's pages were blocked from the build sandbox (2026-09-30), so the
+# per-family tables of user agents could not be read in full. Both entries
+# are therefore verified against the union of all of Google's crawler lists:
+# an address in any of them is Google's crawling infrastructure, whichever
+# family a token belongs to. Reverse DNS is not used: googleusercontent.com
+# also covers customers' Google Cloud machines (see Googlebot below).
+#
+# Special-case crawlers "may ignore robots.txt rules" (they work under an
+# agreement with the site, e.g. AdsBot with the advertiser's permission);
+# they are not user-triggered, so they stay ordinary entries.
+- org: Google
+  name: Google special-case crawlers
+  ua_patterns: ['\bAdsBot-Google\b', '\bMediapartners-Google\b', '\bAPIs-Google\b']
+  verify:
+    method: ip_ranges
+    urls:
+      - "https://developers.google.com/static/crawling/ipranges/special-crawlers.json"
+      - "https://developers.google.com/static/crawling/ipranges/user-triggered-fetchers.json"
+      - "https://developers.google.com/static/crawling/ipranges/user-triggered-fetchers-google.json"
+      - "https://developers.google.com/static/crawling/ipranges/user-triggered-agents.json"
+      - "https://developers.google.com/static/crawling/ipranges/common-crawlers.json"
+
+# User-triggered fetchers: "Because the fetch was requested by a user, these
+# fetchers generally ignore robots.txt rules" (user-triggered fetchers page).
+- org: Google
+  name: Google user-triggered fetchers
+  ua_patterns: ['\bFeedFetcher-Google\b', '\bGoogle-Read-Aloud\b', '\bGoogle-Site-Verification\b',
+    '\bGoogle-Pinpoint\b', '\bGoogle-CWS\b', '\bGoogle-NotebookLM\b', '\bGoogle-Agent\b']
+  verify:
+    method: ip_ranges
+    urls:
+      - "https://developers.google.com/static/crawling/ipranges/special-crawlers.json"
+      - "https://developers.google.com/static/crawling/ipranges/user-triggered-fetchers.json"
+      - "https://developers.google.com/static/crawling/ipranges/user-triggered-fetchers-google.json"
+      - "https://developers.google.com/static/crawling/ipranges/user-triggered-agents.json"
+      - "https://developers.google.com/static/crawling/ipranges/common-crawlers.json"
+  user_triggered: true
+  robots_exempt: true
+
 # Google-Extended is a robots.txt product token, not an HTTP user agent:
 # Google fetches with its normal crawler UAs (Googlebot etc.) and the token
 # only controls use for Gemini/Vertex AI. Source:
@@ -187,6 +239,98 @@
   name: Bingbot
   ua_patterns: ['\bbingbot\b']
   verify: {method: rdns, domains: [search.msn.com]}
+
+# ------------------------------------------------------------ DuckDuckGo
+# Sources: https://duckduckgo.com/duckduckgo-help-pages/results/duckduckbot
+# and https://duckduckgo.com/duckduckgo-help-pages/results/duckassistbot
+# DuckDuckBot "respects WWW::RobotRules and originates from" the addresses
+# in duckduckbot.json; DuckAssistBot from those in duckassistbot.json.
+- org: DuckDuckGo
+  name: DuckAssistBot
+  ua_patterns: ['\bDuckAssistBot\b']
+  verify: {method: ip_ranges, url: "https://duckduckgo.com/duckassistbot.json"}
+
+- org: DuckDuckGo
+  name: DuckDuckBot
+  ua_patterns: ['\bDuckDuckBot\b']
+  verify: {method: ip_ranges, url: "https://duckduckgo.com/duckduckbot.json"}
+
+# --------------------------------------------------------------- Mistral
+# Source: https://docs.mistral.ai/robots ("Mistral crawlers"). MistralAI-User
+# fetches pages "for user actions" and is "not used for crawling the web in
+# any automatic fashion"; MistralAI-Index crawls for Mistral's search index.
+# The page publishes "MistralAI-User IP addresses" and "MistralAI-Index IP
+# addresses". The list URLs below were found via the ai-crawler-ipranges
+# registry (github.com/ramhee98/ai-crawler-ipranges) because docs.mistral.ai
+# was blocked from the build sandbox; the operator fetched both from
+# mistral.ai on 2026-09-30 (Google-style ipv4Prefix lists). The page does not
+# say robots.txt may not apply, so MistralAI-User is user-triggered but not
+# exempt.
+- org: Mistral AI
+  name: MistralAI-User
+  ua_patterns: ['\bMistralAI-User\b']
+  verify: {method: ip_ranges, url: "https://mistral.ai/mistralai-user-ips.json"}
+  user_triggered: true
+
+- org: Mistral AI
+  name: MistralAI-Index
+  ua_patterns: ['\bMistralAI-Index\b']
+  verify: {method: ip_ranges, url: "https://mistral.ai/mistralai-index-ips.json"}
+
+# ---------------------------------------------------------------- Seznam
+# Source: https://napoveda.seznam.cz/en/full-text-search/seznambot-crawler/
+# Seznam says every SeznamBot address has a reverse DNS record, but not
+# which domain it ends in, so rDNS is not used (a wrong guess would call
+# the real SeznamBot a spoofer). Seznam publishes the list below on its own
+# search domain (same schema as Google's); the operator fetched it on
+# 2026-09-30 (ipv4Prefix /32s).
+- org: Seznam.cz
+  name: SeznamBot
+  ua_patterns: ['\bSeznamBot\b']
+  verify: {method: ip_ranges, url: "https://search.seznam.cz/ipranges/seznambot.json"}
+
+# ------------------------------------------------------------------ Kagi
+# Source: https://kagi.com/bot. Kagibot's four addresses are listed with
+# host names under kagibot.org (amd., donna., knet., ogi.kagibot.org), and it
+# respects robots.txt. Forward-confirmed reverse DNS under kagibot.org keeps
+# working if the addresses change.
+- org: Kagi
+  name: Kagibot
+  ua_patterns: ['\bKagibot\b']
+  verify: {method: rdns, domains: [kagibot.org]}
+
+# ---------------------------------------------------------------- Ahrefs
+# Sources: https://ahrefs.com/robot and
+# https://help.ahrefs.com/en/articles/78658-what-is-the-list-of-your-ip-ranges
+# "The reverse DNS suffix of the IPs hostname is always ahrefs.com or
+# ahrefs.net." Both bots "strictly respect robots.txt"; AhrefsSiteAudit
+# ignores it only on sites whose verified owners allow that.
+- org: Ahrefs
+  name: AhrefsSiteAudit
+  ua_patterns: ['\bAhrefsSiteAudit\b']
+  verify: {method: rdns, domains: [ahrefs.com, ahrefs.net]}
+
+- org: Ahrefs
+  name: AhrefsBot
+  ua_patterns: ['\bAhrefsBot\b']
+  verify: {method: rdns, domains: [ahrefs.com, ahrefs.net]}
+
+# ------------------------------------------------------------ SE Ranking
+# Sources: https://help.seranking.com/hc/en-us/articles/16335355751196-Verifying-SE-Ranking-Crawler-FAQ
+# (SEBot-WA: "every crawler host resolves under *.sr-srv.net", a domain
+# "owned and exclusively used by SE Ranking") and
+# https://help.seranking.com/hc/en-us/articles/23020353159964-SERankingBacklinksBot-Crawler
+# (reverse DNS "should show you one of the sub-domains of *.seranking.com";
+# it "always respects the rules specified in robots.txt").
+- org: SE Ranking
+  name: SEBot-WA
+  ua_patterns: ['\bSEBot-WA\b']
+  verify: {method: rdns, domains: [sr-srv.net]}
+
+- org: SE Ranking
+  name: SERankingBacklinksBot
+  ua_patterns: ['\bSERankingBacklinksBot\b']
+  verify: {method: rdns, domains: [seranking.com]}
 
 # ------------------------------------------------------------------ Meta
 # Source: https://developers.facebook.com/documentation/sharing/webmasters/web-crawlers

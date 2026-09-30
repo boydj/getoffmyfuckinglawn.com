@@ -344,14 +344,26 @@ func (c *Classifier) verifyRanges(a netip.Addr, cr *Crawler) (bool, error) {
 	if cr.static.contains(a) {
 		return true, nil
 	}
-	if cr.Verify.URL == "" {
+	lists := cr.Verify.Lists()
+	if len(lists) == 0 {
 		return false, nil // static list only: clean miss
 	}
-	in, known := c.ranges.Contains(cr.Verify.URL, a)
-	if !known {
-		return false, fmt.Errorf("%w: no copy of %s", ErrIndeterminate, cr.Verify.URL)
+	// In any list: verified. Missing from every list: spoofed, but only
+	// once every list is known; a missing copy leaves it undecided.
+	var missing string
+	for _, l := range lists {
+		in, known := c.ranges.Contains(l, a)
+		if in {
+			return true, nil
+		}
+		if !known {
+			missing = l
+		}
 	}
-	return in, nil
+	if missing != "" {
+		return false, fmt.Errorf("%w: no copy of %s", ErrIndeterminate, missing)
+	}
+	return false, nil
 }
 
 // domainMatch reports whether host equals one of domains or is a subdomain
