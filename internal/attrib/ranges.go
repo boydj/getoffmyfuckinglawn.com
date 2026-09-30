@@ -109,7 +109,9 @@ func (ps prefixSet) contains(a netip.Addr) bool {
 
 // ParsePrefixes parses a vendor IP list. JSON documents are walked in full
 // and every string value that parses as a CIDR is collected (covers the
-// {"prefixes":[{"ipv4Prefix":...}]} style and any nesting). Anything else
+// {"prefixes":[{"ipv4Prefix":...}]} style and any nesting). A JSON list
+// with no CIDRs at all is taken to list bare addresses instead (some
+// vendors publish {"ips": ["192.0.2.1", ...]}), each one a /32 or /128. Anything else
 // is treated as text: one CIDR (or bare address) per line, '#' comments and
 // blank lines ignored. An input yielding no prefixes is an error, so a
 // broken download never replaces a good list.
@@ -121,7 +123,10 @@ func ParsePrefixes(b []byte) ([]netip.Prefix, error) {
 		if err := json.Unmarshal(t, &doc); err != nil {
 			return nil, fmt.Errorf("attrib: ranges: json: %w", err)
 		}
-		out = walkJSON(doc, out)
+		out = walkJSON(doc, out, false)
+		if len(out) == 0 {
+			out = walkJSON(doc, out, true)
+		}
 	} else {
 		sc := bufio.NewScanner(bytes.NewReader(t))
 		sc.Buffer(make([]byte, 0, 4096), 1<<20)
@@ -158,20 +163,27 @@ func parsePrefixOrAddr(s string) (netip.Prefix, bool) {
 	return netip.Prefix{}, false
 }
 
-func walkJSON(v any, out []netip.Prefix) []netip.Prefix {
+// walkJSON collects the CIDR strings in v, or with bare the bare addresses
+// too. Bare addresses are only used when a document has no CIDR at all: in
+// a CIDR list, a lone address is more likely metadata.
+func walkJSON(v any, out []netip.Prefix, bare bool) []netip.Prefix {
 	switch x := v.(type) {
 	case map[string]any:
 		for _, e := range x {
-			out = walkJSON(e, out)
+			out = walkJSON(e, out, bare)
 		}
 	case []any:
 		for _, e := range x {
-			out = walkJSON(e, out)
+			out = walkJSON(e, out, bare)
 		}
 	case string:
-		// Only real CIDRs: a bare address in JSON is more likely metadata.
-		if p, err := netip.ParsePrefix(strings.TrimSpace(x)); err == nil {
+		s := strings.TrimSpace(x)
+		if p, err := netip.ParsePrefix(s); err == nil {
 			out = append(out, p.Masked())
+		} else if bare {
+			if a, err := netip.ParseAddr(s); err == nil && a.Zone() == "" {
+				out = append(out, netip.PrefixFrom(a, a.BitLen()))
+			}
 		}
 	}
 	return out

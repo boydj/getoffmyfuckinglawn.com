@@ -165,3 +165,15 @@ func TestRepoCrawlersExemptions(t *testing.T) {
 		}
 	}
 }
+
+func TestRepoCrawlersShapBot(t *testing.T) {
+	cs, err := LoadCrawlers("../../config/crawlers.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := MatchUA(cs, "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko); compatible; ShapBot/0.1.0")
+	if c == nil || c.Name != "ShapBot" || c.Org != "Parallel Web Systems" || c.Verify.Method != VerifyIPRanges ||
+		c.Verify.URL != "https://docs.parallel.ai/resources/shapbot.json" || c.UserTriggered || c.RobotsExempt {
+		t.Fatalf("ShapBot: %+v", c)
+	}
+}
