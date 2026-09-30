@@ -97,6 +97,21 @@
   ua_patterns: ['\bPerplexityBot\b']
   verify: {method: ip_ranges, url: "https://www.perplexity.com/perplexitybot.json"}
 
+# -------------------------------------------------------------- Parallel
+# Source: https://docs.parallel.ai/resources/crawler ("Crawler - Parallel
+# Docs"): ShapBot discovers and indexes sites for Parallel's web APIs; its
+# user agent is "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko);
+# compatible; ShapBot/0.1.0", and "for the complete list of ShapBot IPs, see
+# shapbot.json" at docs.parallel.ai/resources/shapbot.json. The page asks
+# sites to allow ShapBot in robots.txt, i.e. it follows robots.txt.
+# The list was confirmed by the operator on 2026-09-30 (fetched directly;
+# docs.parallel.ai is blocked from the build sandbox): Google-style
+# {"prefixes":[{"ipv4Prefix":"x.x.x.x/32"}]}, IPv4 only.
+- org: Parallel Web Systems
+  name: ShapBot
+  ua_patterns: ['\bShapBot\b']
+  verify: {method: ip_ranges, url: "https://docs.parallel.ai/resources/shapbot.json"}
+
 # ------------------------------------------------------------- ByteDance
 # No official ByteDance documentation for Bytespider could be found; only
 # third-party directories describe it. Nothing from those is used here.

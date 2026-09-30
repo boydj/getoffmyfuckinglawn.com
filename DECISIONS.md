@@ -287,3 +287,7 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **Gemini certificate:** self-signed ECDSA P-256 for `base_url`'s host, valid 20 years, created on first start in `gemini_cert_dir`, and never replaced automatically (a corrupt one is an error). Gemini clients pin certificates on first use, so replacing it would lock returning clients out. `make keys-backup` saves it with the onion key.
 - **Configuration:** `gopher_listen` (`:70`) and `gemini_listen` (`:1965`) default on, so existing operator-owned `config.yaml` files get them without editing. `"off"` disables either. `make run` and the load test use unprivileged ports or turn them off.
 - **Gemini proxy requests** (other URL schemes) get `53`; any host is served, like the port-80 catch-all. The homepage links both mirrors through `template.URL`, since html/template only allows http(s) and mailto links; the URLs come from config, never from input.
+
+## ShapBot (Parallel) (follow-up)
+
+- **Added as a known crawler** with `ip_ranges` from `https://docs.parallel.ai/resources/shapbot.json`, the list Parallel's crawler page links ("For the complete list of ShapBot IPs, see shapbot.json"). docs.parallel.ai is blocked from the build sandbox, so the operator fetched the file directly (2026-09-30). It uses the Google-style `prefixes`/`ipv4Prefix` format the range parser already reads: ten IPv4 /32s, no IPv6.
