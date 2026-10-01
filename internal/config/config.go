@@ -89,6 +89,7 @@ type Config struct {
 	ServerSecretEnv string    `yaml:"server_secret_env"`
 	DBPath          string    `yaml:"db_path"`
 	ASNDBPath       string    `yaml:"asn_db_path"`
+	HostingASNsPath string    `yaml:"hosting_asns_path"`
 	PublicDir       string    `yaml:"public_dir"`
 	CorpusDir       string    `yaml:"corpus_dir"`
 	CrawlersFile    string    `yaml:"crawlers_file"`
@@ -124,6 +125,7 @@ func Default() Config {
 		ServerSecretEnv: "LAWN_SECRET",
 		DBPath:          "/var/lib/lawn/lawn.db",
 		ASNDBPath:       "/var/lib/lawn/ip2asn-combined.tsv.gz",
+		HostingASNsPath: "/var/lib/lawn/hosting-asns.txt",
 		PublicDir:       "/var/lib/lawn/public",
 		CorpusDir:       "./corpus",
 		CrawlersFile:    "./config/crawlers.yaml",
@@ -159,6 +161,7 @@ var envOverrides = []struct {
 	{"LAWN_ONION_ADDRESS", func(c *Config) *string { return &c.OnionAddress }},
 	{"LAWN_DB_PATH", func(c *Config) *string { return &c.DBPath }},
 	{"LAWN_ASN_DB_PATH", func(c *Config) *string { return &c.ASNDBPath }},
+	{"LAWN_HOSTING_ASNS_PATH", func(c *Config) *string { return &c.HostingASNsPath }},
 	{"LAWN_PUBLIC_DIR", func(c *Config) *string { return &c.PublicDir }},
 	{"LAWN_CORPUS_DIR", func(c *Config) *string { return &c.CorpusDir }},
 	{"LAWN_CRAWLERS_FILE", func(c *Config) *string { return &c.CrawlersFile }},

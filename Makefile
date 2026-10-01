@@ -154,6 +154,7 @@ run: ## Serve locally on 127.0.0.1:8080 with throwaway state in data/dev
 	LAWN_BASE_URL=http://127.0.0.1:8080 \
 	LAWN_DB_PATH=$(DEV_DIR)/lawn.db \
 	LAWN_ASN_DB_PATH=$(DEV_DIR)/ip2asn-combined.tsv.gz \
+	LAWN_HOSTING_ASNS_PATH=$(DEV_DIR)/hosting-asns.txt \
 	LAWN_PUBLIC_DIR=$(DEV_DIR)/public \
 	LAWN_RANGES_CACHE_DIR=$(DEV_DIR)/ranges \
 	LAWN_CORPUS_DIR=corpus \

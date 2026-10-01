@@ -587,7 +587,12 @@ func Bots(ctx context.Context, cfg config.Config, o BotsOptions, out io.Writer) 
 		return err
 	}
 	defer st.Close()
-	r, err := bots.Collect(ctx, bots.Options{DB: st.DB(), Crawlers: crawlers, Since: since, All: o.All, Exclude: cfg.Exclude})
+	hosting, err := bots.LoadHostingASNs(cfg.HostingASNsPath)
+	if err != nil {
+		return err
+	}
+	r, err := bots.Collect(ctx, bots.Options{DB: st.DB(), Crawlers: crawlers, Since: since, All: o.All,
+		Exclude: cfg.Exclude, Hosting: hosting})
 	if err != nil {
 		return err
 	}

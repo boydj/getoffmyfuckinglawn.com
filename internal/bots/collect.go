@@ -21,7 +21,8 @@ type Options struct {
 	NewFor   time.Duration    // a group first seen within this long ago is "new" (default 7d)
 	All      bool             // include clients with no bot signal (likely humans)
 	Now      func() time.Time
-	Exclude  []netip.Prefix // operator networks (config exclude_cidrs): skipped
+	Exclude  []netip.Prefix  // operator networks (config exclude_cidrs): skipped
+	Hosting  map[uint32]bool // hosting/datacenter ASNs (LoadHostingASNs); nil = not loaded
 }
 
 // Verdicts: what a group did with respect to robots.txt.
@@ -49,6 +50,17 @@ type Client struct {
 	Country              string // "" = unknown or rolled-up only
 	Schemes              string // comma-separated: https, http, gopher, gemini
 	Frontier
+	// Raw-row details for the browser-consistency and behaviour signals
+	// (zero for rolled-up history).
+	Heads, Errors, Favicon int64
+	HTTPS, HTTPSH1         int64    // requests over HTTPS; of those, over HTTP/1.1
+	HTTPSPages             int64    // page fetches (/, /lawn/, /shame/) over HTTPS
+	HTTPSCaptured          int64    // HTTPS rows with header data
+	HTTPSNoSecFetch        int64    // of those, without Sec-Fetch-Mode
+	JA4s                   []string // distinct TLS fingerprints
+	MaxPerMinute           int64    // most /lawn/ fetches within any 60 s
+	Gaps                   int64    // gaps between /lawn/ fetches
+	GapCV                  float64  // their coefficient of variation
 }
 
 // Frontier measures how a client walks the maze: of its /lawn/ fetches
@@ -87,6 +99,9 @@ type Bot struct {
 	TLS         map[string]int64
 	Countries   map[string]int64 // country code -> requests
 	Schemes     map[string]int   // scheme -> clients that used it
+	JA4         map[string]int   // TLS fingerprint -> clients that used it
+	Score       int              // sum of the signals' weights
+	MaxPerMin   int64            // fastest client's most /lawn/ fetches in 60 s
 	Frontier
 	Clients []*Client
 }
@@ -96,6 +111,7 @@ type Report struct {
 	Generated time.Time
 	Since     time.Duration
 	Clients   int
+	Hosting   bool   // the hosting-ASN list was loaded
 	Bots      []*Bot // sorted: new first, then unknown, then by requests
 }
 
@@ -125,7 +141,8 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 		return nil, err
 	}
 
-	rep := &Report{Generated: now, Since: opt.Since, Clients: len(clients)}
+	rep := &Report{Generated: now, Since: opt.Since, Clients: len(clients), Hosting: opt.Hosting != nil}
+	sc := newScorer(clients, opt.Hosting)
 	groups := map[string]*Bot{}
 	for _, c := range clients {
 		token, named := Token(c.UA)
@@ -138,8 +155,8 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 				token, named = "("+c.Schemes+" client)", false
 			}
 		}
-		reasons := signals(c, named)
-		if len(reasons) == 0 && !opt.All {
+		reasons := sc.signals(c, named)
+		if !listable(reasons) && !opt.All {
 			continue
 		}
 		key := token
@@ -152,7 +169,7 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 		if b == nil {
 			b = &Bot{Token: key, Statuses: map[string]int{}, IPs: map[string]bool{}, ASNs: map[string]int64{},
 				PTRDomains: map[string]int64{}, Reasons: map[string]bool{}, Protos: map[string]int64{}, TLS: map[string]int64{},
-				Countries: map[string]int64{}, Schemes: map[string]int{},
+				Countries: map[string]int64{}, Schemes: map[string]int{}, JA4: map[string]int{},
 				FirstSeen: c.First}
 			groups[key] = b
 		}
@@ -180,29 +197,6 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 		return a.Token < b.Token
 	})
 	return rep, nil
-}
-
-// signals lists why a client looks automated. Browsers always send
-// Accept-Language, so its absence (on rows where headers were captured) is
-// a strong hint; so is fetching robots.txt at all.
-func signals(c *Client, named bool) []string {
-	var r []string
-	if named {
-		r = append(r, "ua-names-bot-or-library")
-	}
-	if c.Robots > 0 {
-		r = append(r, "fetched-robots.txt")
-	}
-	if c.Violations > 0 {
-		r = append(r, "entered-/lawn/")
-	}
-	if c.Captured > 0 && c.NoAcceptLg == c.Captured {
-		r = append(r, "no-accept-language")
-	}
-	if c.PTR != "" && crawlerishPTR.MatchString(c.PTR) {
-		r = append(r, "ptr-looks-like-crawler")
-	}
-	return r
 }
 
 func (b *Bot) add(c *Client, reasons []string, crawlers []attrib.Crawler) {
@@ -244,6 +238,10 @@ func (b *Bot) add(c *Client, reasons []string, crawlers []attrib.Crawler) {
 			b.Schemes[sc]++
 		}
 	}
+	for _, fp := range c.JA4s {
+		b.JA4[fp]++
+	}
+	b.MaxPerMin = max(b.MaxPerMin, c.MaxPerMinute)
 	if b.SampleUA == "" || (b.Contact == "" && Contact(c.UA) != "") {
 		b.SampleUA = c.UA
 		b.Contact = Contact(c.UA)
@@ -270,6 +268,7 @@ func (b *Bot) finish(newCutoff int64) {
 		b.Verdict = VerdictNoRobots
 	}
 	b.New = b.FirstSeen >= newCutoff
+	b.Score = Score(b.Reasons)
 }
 
 func asnLabel(asn int64, org string) string {
@@ -286,6 +285,7 @@ func scanClients(ctx context.Context, db *sql.DB, from int64, withDaily bool, sk
 	q := `
 SELECT r.ip, r.ua, r.asn, r.asn_org, r.requests, r.robots, r.bait, r.violations, r.max_depth, r.first, r.last,
        r.captured, r.no_al, r.header_names, r.proto, r.tls, r.country, r.schemes,
+       r.heads, r.errors, r.favicon, r.https, r.https_h1, r.https_pages, r.https_captured, r.https_no_sf, r.ja4s,
        COALESCE(i.status, ''), COALESCE(i.claimed_org, ''), COALESCE(h.ptr, '')
 FROM (
   SELECT ip, COALESCE(user_agent, '') AS ua, COALESCE(MAX(asn), 0) AS asn, COALESCE(MAX(asn_org), '') AS asn_org,
@@ -300,7 +300,18 @@ FROM (
          COALESCE(MAX(header_names), '') AS header_names,
          COALESCE(MAX(proto), '') AS proto, COALESCE(MAX(tls), '') AS tls,
          COALESCE(MAX(country), '') AS country,
-         COALESCE(GROUP_CONCAT(DISTINCT scheme), '') AS schemes
+         COALESCE(GROUP_CONCAT(DISTINCT scheme), '') AS schemes,
+         SUM(method = 'HEAD') AS heads,
+         SUM(status >= 400) AS errors,
+         SUM(path = '/favicon.ico' OR path LIKE '/favicon.ico?%') AS favicon,
+         SUM(IFNULL(scheme, '') = 'https') AS https,
+         SUM(IFNULL(scheme, '') = 'https' AND IFNULL(proto, '') = 'HTTP/1.1') AS https_h1,
+         SUM(IFNULL(scheme, '') = 'https' AND method = 'GET' AND (path = '/' OR path LIKE '/?%' OR path LIKE '/lawn/%'
+             OR path LIKE '/shame/%')) AS https_pages,
+         SUM(IFNULL(scheme, '') = 'https' AND header_names IS NOT NULL) AS https_captured,
+         SUM(IFNULL(scheme, '') = 'https' AND header_names IS NOT NULL
+             AND instr(',' || header_names || ',', ',Sec-Fetch-Mode,') = 0) AS https_no_sf,
+         COALESCE(GROUP_CONCAT(DISTINCT ja4), '') AS ja4s
   FROM requests WHERE ts_start >= ?
   GROUP BY ip, COALESCE(user_agent, '')
 ) r
@@ -314,11 +325,17 @@ LEFT JOIN hosts h ON h.ip = r.ip`
 	var out []*Client
 	for rows.Next() {
 		c := &Client{}
+		var ja4s string
 		if err := rows.Scan(&c.IP, &c.UA, &c.ASN, &c.ASNOrg, &c.Requests, &c.Robots, &c.Bait, &c.Violations, &c.MaxDepth,
 			&c.First, &c.Last, &c.Captured, &c.NoAcceptLg, &c.HeaderNames, &c.Proto, &c.TLS, &c.Country, &c.Schemes,
+			&c.Heads, &c.Errors, &c.Favicon, &c.HTTPS, &c.HTTPSH1, &c.HTTPSPages, &c.HTTPSCaptured, &c.HTTPSNoSecFetch, &ja4s,
 			&c.Status, &c.ClaimedOrg, &c.PTR); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("bots: scan: %w", err)
+		}
+		if ja4s != "" {
+			c.JA4s = strings.Split(ja4s, ",")
+			sort.Strings(c.JA4s)
 		}
 		if skip.Has(c.IP) {
 			continue
@@ -331,6 +348,9 @@ LEFT JOIN hosts h ON h.ip = r.ip`
 		return nil, fmt.Errorf("bots: scan: %w", err)
 	}
 	if err := scanFrontier(ctx, db, from, byKey); err != nil {
+		return nil, err
+	}
+	if err := scanTiming(ctx, db, from, byKey); err != nil {
 		return nil, err
 	}
 	if !withDaily {
@@ -400,6 +420,41 @@ GROUP BY ip, ua`, from)
 			c.Frontier = f
 		}
 	}
+	return rows.Err()
+}
+
+// scanTiming fills each client's maze timing from its /lawn/ fetches since
+// from, streamed in (ip, ua, time) order.
+func scanTiming(ctx context.Context, db *sql.DB, from int64, byKey map[[2]string]*Client) error {
+	rows, err := db.QueryContext(ctx, `
+SELECT ip, COALESCE(user_agent, ''), ts_start FROM requests
+WHERE is_violation = 1 AND ts_start >= ?
+ORDER BY ip, COALESCE(user_agent, ''), ts_start`, from)
+	if err != nil {
+		return fmt.Errorf("bots: timing: %w", err)
+	}
+	defer rows.Close()
+	var cur [2]string
+	var t timing
+	flush := func() {
+		if c := byKey[cur]; c != nil && len(t.ts) > 0 {
+			c.MaxPerMinute, c.Gaps, c.GapCV = t.result()
+		}
+		t.ts = t.ts[:0]
+	}
+	for rows.Next() {
+		var k [2]string
+		var ts int64
+		if err := rows.Scan(&k[0], &k[1], &ts); err != nil {
+			return fmt.Errorf("bots: timing: %w", err)
+		}
+		if k != cur {
+			flush()
+			cur = k
+		}
+		t.ts = append(t.ts, ts)
+	}
+	flush()
 	return rows.Err()
 }
 

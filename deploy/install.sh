@@ -40,7 +40,7 @@ for u in "${units[@]}"; do
 	install -m 0644 -o root -g root "$src/deploy/$u" "/etc/systemd/system/$u"
 done
 install -d -m 0755 "$LIB"
-for s in host-setup.sh asn-refresh.sh backup.sh reboot-check.sh patch-status.sh; do
+for s in host-setup.sh asn-refresh.sh hosting-refresh.sh backup.sh reboot-check.sh patch-status.sh; do
 	install -m 0755 -o root -g root "$src/deploy/$s" "$LIB/$s"
 done
 install -m 0644 -o root -g root "$src/deploy/Caddyfile" "$LIB/Caddyfile"

@@ -1,5 +1,5 @@
 [Unit]
-Description=Weekly iptoasn.com ASN dataset refresh for lawn
+Description=Weekly ASN dataset refresh for lawn
 
 [Timer]
 OnCalendar=weekly

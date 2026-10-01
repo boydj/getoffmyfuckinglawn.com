@@ -1,6 +1,7 @@
-# Weekly refresh of the iptoasn.com ip2asn-combined dataset.
+# Weekly refresh of the iptoasn.com ip2asn-combined dataset, then of
+# X4BNet's hosting-ASN list (used only by `lawn bots`).
 [Unit]
-Description=lawn: refresh iptoasn.com ASN dataset
+Description=lawn: refresh ASN datasets
 Wants=network-online.target
 After=network-online.target
 
@@ -9,6 +10,9 @@ Type=oneshot
 User=lawn
 Group=lawn
 ExecStart=/usr/local/lib/lawn/asn-refresh.sh
+# "-": a failed hosting list download keeps the old file and does not fail
+# the unit; it is only a hint in a private report.
+ExecStart=-/usr/local/lib/lawn/hosting-refresh.sh
 # "+" runs this one step with full privileges so it can signal lawn; it is a
 # no-op when lawn is not running.
 ExecStartPost=+/bin/systemctl try-reload-or-restart lawn.service
