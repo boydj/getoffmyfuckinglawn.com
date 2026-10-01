@@ -93,6 +93,7 @@ type Bot struct {
 	ASNs        map[string]int64 // "AS<n> <org>" -> requests
 	PTRDomains  map[string]int64
 	Reasons     map[string]bool
+	ReasonN     map[string]int // signal -> clients in the group that showed it
 	SampleUA    string
 	HeaderNames string
 	Protos      map[string]int64
@@ -168,7 +169,7 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 		b := groups[key]
 		if b == nil {
 			b = &Bot{Token: key, Statuses: map[string]int{}, IPs: map[string]bool{}, ASNs: map[string]int64{},
-				PTRDomains: map[string]int64{}, Reasons: map[string]bool{}, Protos: map[string]int64{}, TLS: map[string]int64{},
+				PTRDomains: map[string]int64{}, Reasons: map[string]bool{}, ReasonN: map[string]int{}, Protos: map[string]int64{}, TLS: map[string]int64{},
 				Countries: map[string]int64{}, Schemes: map[string]int{}, JA4: map[string]int{},
 				FirstSeen: c.First}
 			groups[key] = b
@@ -223,6 +224,7 @@ func (b *Bot) add(c *Client, reasons []string, crawlers []attrib.Crawler) {
 	}
 	for _, r := range reasons {
 		b.Reasons[r] = true
+		b.ReasonN[r]++
 	}
 	if c.Proto != "" {
 		b.Protos[c.Proto] += c.Requests
