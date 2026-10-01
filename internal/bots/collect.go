@@ -278,6 +278,11 @@ func asnLabel(asn int64, org string) string {
 	return logstore.NetworkLabel(uint32(asn), org, "unknown ASN")
 }
 
+// isHTTPS is the SQL test for a request that arrived over HTTPS. Rows
+// logged before the scheme column (migration 6) have no scheme; back then
+// only Caddy's HTTPS site reached the app, and it set the TLS column.
+const isHTTPS = `(IFNULL(scheme, '') = 'https' OR (scheme IS NULL AND tls IS NOT NULL))`
+
 // scanClients aggregates raw requests since from (unix ms) per (ip, ua),
 // joined with identities and hosts. withDaily adds rolled-up visits.
 // Clients whose IP is in skip (operator networks) are left out.
@@ -304,12 +309,12 @@ FROM (
          SUM(method = 'HEAD') AS heads,
          SUM(status >= 400) AS errors,
          SUM(path = '/favicon.ico' OR path LIKE '/favicon.ico?%') AS favicon,
-         SUM(IFNULL(scheme, '') = 'https') AS https,
-         SUM(IFNULL(scheme, '') = 'https' AND IFNULL(proto, '') = 'HTTP/1.1') AS https_h1,
-         SUM(IFNULL(scheme, '') = 'https' AND method = 'GET' AND (path = '/' OR path LIKE '/?%' OR path LIKE '/lawn/%'
+         SUM(` + isHTTPS + `) AS https,
+         SUM(` + isHTTPS + ` AND IFNULL(proto, '') = 'HTTP/1.1') AS https_h1,
+         SUM(` + isHTTPS + ` AND method = 'GET' AND (path = '/' OR path LIKE '/?%' OR path LIKE '/lawn/%'
              OR path LIKE '/shame/%')) AS https_pages,
-         SUM(IFNULL(scheme, '') = 'https' AND header_names IS NOT NULL) AS https_captured,
-         SUM(IFNULL(scheme, '') = 'https' AND header_names IS NOT NULL
+         SUM(` + isHTTPS + ` AND header_names IS NOT NULL) AS https_captured,
+         SUM(` + isHTTPS + ` AND header_names IS NOT NULL
              AND instr(',' || header_names || ',', ',Sec-Fetch-Mode,') = 0) AS https_no_sf,
          COALESCE(GROUP_CONCAT(DISTINCT ja4), '') AS ja4s
   FROM requests WHERE ts_start >= ?

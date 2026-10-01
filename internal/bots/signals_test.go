@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -203,5 +204,38 @@ func TestSupportingOnly(t *testing.T) {
 	}
 	if Score(map[string]bool{SigTLSLibrary + "curl": true, SigHosting: true}) != 4 {
 		t.Error("score")
+	}
+}
+
+// Rows logged before the scheme column count as HTTPS when they carry TLS
+// details (only Caddy's HTTPS site reached the app then), and not when
+// they don't.
+func TestPreSchemeRowsAreHTTPS(t *testing.T) {
+	s, err := logstore.Open(filepath.Join(t.TempDir(), "lawn.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	chrome := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
+	row := func(ip, tls string) logstore.Request {
+		return logstore.Request{TsStart: now.Add(-time.Hour).UnixMilli(), IP: ip, UserAgent: chrome, Method: "GET",
+			Path: "/lawn/x", Depth: 0, IsViolation: true, Status: 200, HeaderNames: "Accept,User-Agent",
+			Proto: "HTTP/1.1", TLS: tls} // no Scheme: logged before migration 6
+	}
+	if err := s.InsertRequests(context.Background(), []logstore.Request{
+		row("192.0.2.1", "tls1.3 TLS_AES_128_GCM_SHA256"), row("192.0.2.2", "")}); err != nil {
+		t.Fatal(err)
+	}
+	tr, err := Traits(context.Background(), TraitOptions{DB: s.DB()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	has := func(ip, sig string) bool { return slices.Contains(tr[[2]string{ip, chrome}].Signals, sig) }
+	if !has("192.0.2.1", SigNoSecFetch) || !has("192.0.2.1", SigHTTP1) {
+		t.Errorf("TLS row not judged as HTTPS: %v", tr[[2]string{"192.0.2.1", chrome}].Signals)
+	}
+	if has("192.0.2.2", SigNoSecFetch) || has("192.0.2.2", SigHTTP1) {
+		t.Errorf("row without TLS judged as HTTPS: %v", tr[[2]string{"192.0.2.2", chrome}].Signals)
 	}
 }

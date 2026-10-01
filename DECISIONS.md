@@ -403,3 +403,4 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
   - **feed.json is unchanged.** Section 8 fixes its fields.
   - **Wall pages link to the homepage methodology, not to outside sites.** Wall pages carry no external links (existing rule). The methodology explains JA4 and each trait, and links to the JA4 spec and X4BNet.
   - **Recomputed at most hourly.** Traits scan every raw row (aggregates, frontier, timing), which is too much for every 5-minute rebuild on the 2 GB box. Builds in between reuse the last result; `lawn build-shame` computes fresh.
+- **Existing logs are judged too.** Signals are computed from the raw log at report time, so the first run after deploy covers the last 90 days. JA4 exists only from this deploy on. Rows from before the `scheme` column (migration 6) count as HTTPS when they carry TLS details: back then only Caddy's HTTPS site reached the app, and plain HTTP (port 80, the onion mirror) never had TLS details.
