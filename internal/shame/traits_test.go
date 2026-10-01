@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/bots"
 )
@@ -78,5 +79,61 @@ func TestTraitTextFactual(t *testing.T) {
 	}
 	if !strings.Contains(TraitText(bots.SigTLSLibrary+"python-requests"), "identifying as python-requests") {
 		t.Error("library text")
+	}
+}
+
+// A well-behaved group shows its strongest observed traits, points at the
+// wall page of its network when other clients there entered /lawn/, and
+// carries every trait in well-behaved.json.
+func TestWellBehavedTraitsAndWallLink(t *testing.T) {
+	s := standardFixture(t)
+	var f fx
+	// Same network as the anonymous curl offender (AS64520), robots.txt only.
+	f.robots("100.64.3.50", uaNoise, 64520, "EYEBALL-ISP", 2*time.Hour)
+	f.home("100.64.3.50", uaNoise, 2*time.Hour-time.Minute)
+	f.load(t, s)
+	opt := testOptions(t, s)
+	opt.Traits = map[[2]string]bots.ClientTraits{
+		{"100.64.3.50", uaNoise}: {Signals: []string{bots.SigNoSecFetch, bots.SigNoAcceptLang, bots.SigHTTP1, bots.SigHosting}},
+		{"192.0.2.200", uaNoise}: {Signals: []string{bots.SigNoAcceptLang}},
+	}
+	r := build(t, opt)
+	var eyeball, polite *WellBehavedGroup
+	for _, g := range r.WellBehaved {
+		switch g.ASN {
+		case 64520:
+			eyeball = g
+		case 64999:
+			polite = g
+		}
+	}
+	if eyeball == nil || polite == nil {
+		t.Fatalf("groups: %+v", r.WellBehaved)
+	}
+	if eyeball.WallSlug != "as64520-eyeball-isp" || polite.WallSlug != "" {
+		t.Errorf("wall links: %q %q", eyeball.WallSlug, polite.WallSlug)
+	}
+	if eyeball.TraitClients != 1 || len(eyeball.Traits) != 4 || eyeball.Traits[0].Signal != bots.SigNoSecFetch {
+		t.Errorf("traits: %d %v", eyeball.TraitClients, eyeball.Traits)
+	}
+	root := filepath.Join(opt.PublicDir, "shame")
+	html := read(t, filepath.Join(root, "well-behaved", "index.html"))
+	checkPage(t, "well-behaved", html)
+	for _, w := range []string{
+		"Observed: Claimed a browser version that sends Sec-Fetch-* headers to HTTPS sites, but never sent them. (1 of 1 client)",
+		"+1 more observed traits",
+		`Other clients from this network requested <code>/lawn/</code>: <a href="../org/as64520-eyeball-isp/">see the Wall of Shame</a>`,
+		`href="/#traits"`,
+	} {
+		if !strings.Contains(html, w) {
+			t.Errorf("well-behaved page lacks %q", w)
+		}
+	}
+	if strings.Contains(html, "100.64.3.50") {
+		t.Error("anonymous address published")
+	}
+	raw := read(t, filepath.Join(root, "well-behaved.json"))
+	if !strings.Contains(raw, `"trait_clients": 1`) || !strings.Contains(raw, `"trait": "browser-ua-no-sec-fetch"`) {
+		t.Errorf("well-behaved.json traits missing:\n%s", raw)
 	}
 }

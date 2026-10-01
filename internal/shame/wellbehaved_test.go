@@ -320,7 +320,7 @@ func TestBuildWellBehaved(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &got); err != nil {
 		t.Fatal(err)
 	}
-	keys := []string{"org", "claimed_org", "status", "asn", "asn_org", "cidrs", "robots_fetches", "requests", "saw_bait", "first_seen", "last_seen"}
+	keys := []string{"org", "claimed_org", "status", "asn", "asn_org", "cidrs", "robots_fetches", "requests", "saw_bait", "first_seen", "last_seen", "trait_clients", "traits"}
 	if len(got) != len(r.WellBehavedFeed) || len(got) != 5 {
 		t.Fatalf("well-behaved.json entries %d, report %d", len(got), len(r.WellBehavedFeed))
 	}
