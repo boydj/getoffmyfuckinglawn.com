@@ -60,6 +60,23 @@ type App struct {
 	exclude    atomic.Pointer[[]netip.Prefix]   // operator networks (exclude_cidrs)
 	pages      server.PageRenderer              // maze generator, for the admin preview
 	small      *smallweb.Server                 // Gopher and Gemini; nil when both are off
+	// Observed traits for the wall (bots.Traits), recomputed at most every
+	// traitsEvery under buildMu: they scan every raw row.
+	traits   map[[2]string]bots.ClientTraits
+	traitsAt time.Time
+}
+
+// traitsEvery is how often the shame loop recomputes observed traits. The
+// wall itself rebuilds more often with the last result.
+const traitsEvery = time.Hour
+
+// ShameTraits computes the wall's observed traits from the raw log.
+func ShameTraits(ctx context.Context, cfg config.Config, st *logstore.Store, exclude []netip.Prefix) (map[[2]string]bots.ClientTraits, error) {
+	hosting, err := bots.LoadHostingASNs(cfg.HostingASNsPath)
+	if err != nil {
+		return nil, err
+	}
+	return bots.Traits(ctx, bots.TraitOptions{DB: st.DB(), Hosting: hosting, Exclude: exclude})
 }
 
 func (o *Options) defaults() {
@@ -258,6 +275,7 @@ func ShameOptions(cfg config.Config, st *logstore.Store, now func() time.Time, c
 		BlocklistMin: cfg.Shame.BlocklistMinViolations,
 		Now:          now,
 		Exclude:      cfg.Exclude,
+		RawDays:      cfg.Retention.RawRequestsDays,
 	}
 }
 
@@ -267,6 +285,16 @@ func (a *App) BuildShame(ctx context.Context) (*shame.Report, error) {
 	defer a.buildMu.Unlock()
 	opt := ShameOptions(a.Cfg, a.Store, a.opt.Now, *a.crawlers.Load())
 	opt.Exclude = *a.exclude.Load()
+	if a.traits == nil || a.opt.Now().Sub(a.traitsAt) >= traitsEvery {
+		t, err := ShameTraits(ctx, a.Cfg, a.Store, opt.Exclude)
+		if err != nil {
+			// The wall still builds, with the last traits (or none).
+			a.opt.Logf("shame: traits: %v", err)
+		} else {
+			a.traits, a.traitsAt = t, a.opt.Now()
+		}
+	}
+	opt.Traits = a.traits
 	r, err := shame.Build(ctx, opt)
 	if err == nil {
 		a.lastBuild.Store(a.opt.Now().Unix())
@@ -505,7 +533,11 @@ func BuildShameOnce(ctx context.Context, cfg config.Config, out io.Writer) error
 	if err := os.MkdirAll(cfg.PublicDir, 0o755); err != nil {
 		return err
 	}
-	r, err := shame.Build(ctx, ShameOptions(cfg, st, time.Now, loadCrawlersOrNil(cfg, out)))
+	opt := ShameOptions(cfg, st, time.Now, loadCrawlersOrNil(cfg, out))
+	if opt.Traits, err = ShameTraits(ctx, cfg, st, cfg.Exclude); err != nil {
+		fmt.Fprintf(out, "warning: traits: %v\n", err)
+	}
+	r, err := shame.Build(ctx, opt)
 	if err != nil {
 		return err
 	}

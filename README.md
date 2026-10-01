@@ -292,6 +292,8 @@ GROUP BY 1,2 ORDER BY n DESC LIMIT 30;"
   | `hosting-network`, `browser-ua-no-favicon` | 1 | supporting only: never list a client on their own (VPN users, cached favicons) |
 
   The existing signals weigh 3 (UA names a bot or library), 2 (robots.txt, no `Accept-Language`, crawler-looking PTR) and 1 (entered `/lawn/`). `SCORE` adds up a group's signals.
+
+  **Published as observed traits.** Each wall page has an "Observed traits" section. It lists every signal in the table above, worded as a plain fact with how many of the group's clients showed it, plus the group's fastest pace and most common JA4 fingerprints. Scores, reverse DNS and per-address data are never published, and the homepage methodology explains each trait. Traits come from the raw log (the last `retention.raw_requests_days`) and are recomputed at most hourly; `lawn build-shame` computes them fresh.
 - **Browser-looking UAs** with those signals are grouped by network instead, which is how headless scrapers show up.
 - **Each group gets a verdict:** `compliant`, `entered /lawn/`, `read robots.txt, entered /lawn/`, or `never fetched robots.txt`.
 - **Flags:** `NEW` for groups first seen in the last 7 days, `UNKNOWN` for groups not in `crawlers.yaml`.

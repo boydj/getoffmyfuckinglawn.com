@@ -2,14 +2,19 @@ package bots
 
 import (
 	"bufio"
+	"context"
+	"database/sql"
 	"errors"
 	"io/fs"
 	"math"
+	"net/netip"
 	"os"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/boydj/getoffmyfuckinglawn.com/internal/logstore"
 )
 
 // Signals: why a client looks automated. Each is a fact about what the
@@ -333,4 +338,61 @@ func (t *timing) result() (perMinute, gaps int64, cv float64) {
 	}
 	variance := math.Max(sq/n-mean*mean, 0)
 	return perMinute, int64(n), math.Sqrt(variance) / mean
+}
+
+// PublicSignals are the signals the Wall of Shame may show: observations
+// of what a client sent or how it walked the maze. Left out: the user
+// agent naming a bot (its UA is shown anyway), robots.txt and /lawn/
+// (the wall already reports both), and reverse DNS (a per-address lookup).
+var PublicSignals = []string{
+	SigTLSLibrary, SigNoH2, SigNoSecFetch, SigOpensEarly, SigHTTP1, SigNoAcceptLang,
+	SigFast, SigRegular, SigHead, SigDeep, SigErrors, SigNoFavicon, SigHosting,
+}
+
+// IsPublic reports whether sig may be published (prefix-matched for
+// SigTLSLibrary).
+func IsPublic(sig string) bool {
+	for _, p := range PublicSignals {
+		if sig == p || p == SigTLSLibrary && strings.HasPrefix(sig, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// ClientTraits is what the wall shows about one (ip, user agent).
+type ClientTraits struct {
+	Signals   []string // public signals only
+	PerMinute int64    // most /lawn/ fetches within any 60 s
+	JA4s      []string
+}
+
+// TraitOptions configures Traits.
+type TraitOptions struct {
+	DB      *sql.DB
+	Hosting map[uint32]bool
+	Exclude []netip.Prefix
+}
+
+// Traits computes the public signals of every (ip, user agent) in the raw
+// request log (rolled-up history has no detail). Keys are {ip, ua}.
+func Traits(ctx context.Context, opt TraitOptions) (map[[2]string]ClientTraits, error) {
+	clients, err := scanClients(ctx, opt.DB, 0, false, logstore.NewIPSet(opt.Exclude))
+	if err != nil {
+		return nil, err
+	}
+	sc := newScorer(clients, opt.Hosting)
+	out := make(map[[2]string]ClientTraits, len(clients))
+	for _, c := range clients {
+		_, named := Token(c.UA)
+		var t ClientTraits
+		for _, s := range sc.signals(c, named) {
+			if IsPublic(s) {
+				t.Signals = append(t.Signals, s)
+			}
+		}
+		t.PerMinute, t.JA4s = c.MaxPerMinute, c.JA4s
+		out[[2]string{c.IP, c.UA}] = t
+	}
+	return out, nil
 }

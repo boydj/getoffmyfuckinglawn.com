@@ -391,3 +391,15 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **Untested:**
   - the divert/alternatives install and the custom Caddy on the real host;
   - JA4 behind real-world middleboxes.
+- **Published on the wall as "Observed traits" (operator request).** Each group page lists the signals as plain facts ("claimed a browser user agent, but its TLS handshake did not offer HTTP/2…"), each with how many of the group's clients (address + user agent) showed it. The page also gives the fastest pace one client reached and the top five JA4 fingerprints.
+  - **Section 8 still holds:**
+    - only facts, no claims about intent;
+    - each section carries a note that a trait is an observation, not a verdict on who or what a client is;
+    - nothing is shown per address.
+  - **Not published:**
+    - the score, because a weighted sum is a judgment, not a fact;
+    - reverse-DNS-based signals, because each is a lookup of one address;
+    - the signals the wall already shows another way (UA names a bot, robots.txt, entered `/lawn/`).
+  - **feed.json is unchanged.** Section 8 fixes its fields.
+  - **Wall pages link to the homepage methodology, not to outside sites.** Wall pages carry no external links (existing rule). The methodology explains JA4 and each trait, and links to the JA4 spec and X4BNet.
+  - **Recomputed at most hourly.** Traits scan every raw row (aggregates, frontier, timing), which is too much for every 5-minute rebuild on the 2 GB box. Builds in between reuse the last result; `lawn build-shame` computes fresh.

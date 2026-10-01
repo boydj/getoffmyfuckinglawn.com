@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/boydj/getoffmyfuckinglawn.com/internal/bots"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/logstore"
 )
 
@@ -212,4 +213,39 @@ func samplePathOK(p []byte) bool {
 		}
 	}
 	return true
+}
+
+// TraitText describes an observed trait as a plain fact about what the
+// client sent or did (section 8: facts only, no claims about intent).
+func TraitText(sig string) string {
+	if lib, ok := strings.CutPrefix(sig, bots.SigTLSLibrary); ok {
+		return "Claimed a browser user agent, but its TLS handshake had the same JA4 fingerprint as clients identifying as " + lib + "."
+	}
+	switch sig {
+	case bots.SigNoH2:
+		return "Claimed a browser user agent, but its TLS handshake did not offer HTTP/2. Mainstream browsers always offer it."
+	case bots.SigNoSecFetch:
+		return "Claimed a browser version that sends Sec-Fetch-* headers to HTTPS sites, but never sent them."
+	case bots.SigOpensEarly:
+		return "Fetched most of the maze links it followed while the page they came from was still being served."
+	case bots.SigHTTP1:
+		return "Claimed a browser user agent, but used HTTP/1.1 over HTTPS although HTTP/2 was offered."
+	case bots.SigNoAcceptLang:
+		return "Sent no Accept-Language header. Mainstream browsers always send one."
+	case bots.SigFast:
+		return "Fetched 30 or more maze pages within one minute."
+	case bots.SigRegular:
+		return "Fetched maze pages at evenly spaced intervals (20 or more gaps, varying by less than a quarter of their average)."
+	case bots.SigHead:
+		return "Claimed a browser user agent and sent HEAD requests."
+	case bots.SigDeep:
+		return "Followed maze links 10 or more levels deep."
+	case bots.SigErrors:
+		return "Most of its requests got error responses."
+	case bots.SigNoFavicon:
+		return "Claimed a browser user agent and fetched 10 or more pages over HTTPS without ever requesting /favicon.ico."
+	case bots.SigHosting:
+		return "Came from a network that X4BNet's public list classifies as datacenter or hosting."
+	}
+	return sig
 }

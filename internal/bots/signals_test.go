@@ -173,6 +173,26 @@ func TestBrowserImpersonation(t *testing.T) {
 	if strings.Contains(out.String(), "Hosting-ASN list not loaded") {
 		t.Error("hosting list reported missing")
 	}
+
+	// The wall's view: only public signals, per (ip, ua).
+	tr, err := Traits(context.Background(), TraitOptions{DB: s.DB(), Hosting: map[uint32]bool{63949: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imp := tr[[2]string{"172.105.1.2", chrome}]
+	if imp.PerMinute != 40 || len(imp.JA4s) != 1 || len(imp.Signals) < 10 {
+		t.Errorf("impersonator traits: %+v", imp)
+	}
+	for _, c := range tr {
+		for _, sig := range c.Signals {
+			if !IsPublic(sig) || sig == SigEntered || sig == SigNamed || sig == SigRobots || sig == SigPTR {
+				t.Errorf("non-public signal %s", sig)
+			}
+		}
+	}
+	if p := tr[[2]string{"192.0.2.77", chrome}]; len(p.Signals) != 0 {
+		t.Errorf("person traits: %v", p.Signals)
+	}
 }
 
 // Supporting signals alone (hosting network, no favicon) do not list a

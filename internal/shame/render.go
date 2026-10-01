@@ -129,6 +129,7 @@ func parseTemplates(opt Options) (*template.Template, error) {
 		"bytes":       fmtBytes,
 		"when":        fmtTime,
 		"trunc":       truncate,
+		"trait":       TraitText,
 		"statusLabel": StatusLabel,
 		"statusClass": statusClass,
 		"sub":         func(a, b int) int { return a - b },
@@ -205,6 +206,7 @@ type orgView struct {
 	CIDRTotal   int
 	CIDRNote    string
 	Paths       []string
+	RawDays     int // retention.raw_requests_days, for the traits note
 	RobotsTxt   string
 }
 
@@ -334,7 +336,7 @@ func spark(g *Group, now time.Time) *sparkView {
 	return &sparkView{W: w, H: h, Days: sparkDays, Peak: peak, Points: b.String()}
 }
 
-func renderOrg(t *template.Template, r *Report, g *Group, robots string, buf *bytes.Buffer) error {
+func renderOrg(t *template.Template, r *Report, g *Group, robots string, rawDays int, buf *bytes.Buffer) error {
 	sp := spark(g, r.Generated)
 	for _, c := range orgCapLevels {
 		v := orgView{
@@ -351,6 +353,7 @@ func renderOrg(t *template.Template, r *Report, g *Group, robots string, buf *by
 			UALen:       c.uaLen,
 			CIDRTotal:   len(g.CIDRs),
 			CIDRNote:    cidrNote(g),
+			RawDays:     rawDays,
 			RobotsTxt:   robots,
 		}
 		if g.Kind != KindASN && g.Kind != logstore.StatusSpoofed {
@@ -402,7 +405,7 @@ func writeAll(ctx context.Context, t *template.Template, r *Report, opt Options,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := renderOrg(t, r, g, opt.RobotsTxt, &buf); err != nil {
+		if err := renderOrg(t, r, g, opt.RobotsTxt, opt.rawDays(), &buf); err != nil {
 			return err
 		}
 		if buf.Len() >= MaxPageBytes {
