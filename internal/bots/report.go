@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -99,7 +100,7 @@ func writeDetails(w io.Writer, b *Bot) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  sample UA:    %s\n", clip(b.SampleUA, 300))
 	fmt.Fprintf(w, "  contact:      %s\n", orDash(b.Contact))
-	fmt.Fprintf(w, "  why a bot:    %s (score %d)\n", joinOr(sortedKeys(b.Reasons), "-"), b.Score)
+	fmt.Fprintf(w, "  why a bot:    %s (score %d)\n", reasonSummary(b), b.Score)
 	fmt.Fprintf(w, "  identity:     %s\n", statusSummary(b.Statuses))
 	fmt.Fprintf(w, "  networks:     %s\n", joinOr(top(b.ASNs, 3), "-"))
 	fmt.Fprintf(w, "  PTR domains:  %s\n", joinOr(top(b.PTRDomains, 3), "none"))
@@ -125,6 +126,19 @@ func writeDetails(w io.Writer, b *Bot) {
 		fmt.Fprintf(w, "      ua_patterns: ['\\b%s\\b']\n", regexp.QuoteMeta(b.Token))
 		fmt.Fprintln(w, "      verify: {method: none}  # TODO: official verification method, if any")
 	}
+}
+
+// reasonSummary lists a group's signals, strongest first, each with how
+// many of its clients showed it: a browser-like group merges every client
+// on one network, and a signal from one of them says nothing about the rest.
+func reasonSummary(b *Bot) string {
+	sigs := sortedKeys(b.Reasons)
+	sort.SliceStable(sigs, func(i, j int) bool { return Weight(sigs[i]) > Weight(sigs[j]) })
+	parts := make([]string, len(sigs))
+	for i, s := range sigs {
+		parts[i] = fmt.Sprintf("%s (%d/%d)", s, b.ReasonN[s], len(b.Clients))
+	}
+	return joinOr(parts, "-")
 }
 
 // openShare is the OPEN column: the share of followed links fetched while

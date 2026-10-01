@@ -180,6 +180,24 @@ type Group struct {
 	agg *agg
 }
 
+// sortTraits lists traits strongest first, then by clients, then by name.
+func sortTraits(m map[string]int64) []TraitCount {
+	out := make([]TraitCount, 0, len(m))
+	for k, v := range m {
+		out = append(out, TraitCount{Signal: k, Clients: v})
+	}
+	slices.SortFunc(out, func(x, y TraitCount) int {
+		if c := cmp.Compare(bots.Weight(y.Signal), bots.Weight(x.Signal)); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(y.Clients, x.Clients); c != 0 {
+			return c
+		}
+		return cmp.Compare(x.Signal, y.Signal)
+	})
+	return out
+}
+
 // TraitCount is one observed trait and how many of a group's clients
 // showed it.
 type TraitCount struct {
@@ -807,19 +825,7 @@ func (g *Group) finalize() {
 	}
 	slices.SortFunc(g.ASNs, func(x, y ASNRef) int { return cmp.Compare(x.ASN, y.ASN) })
 	g.TraitClients, g.Pace = a.traitClients, a.pace
-	g.Traits = g.Traits[:0]
-	for k, v := range a.traits {
-		g.Traits = append(g.Traits, TraitCount{Signal: k, Clients: v})
-	}
-	slices.SortFunc(g.Traits, func(x, y TraitCount) int {
-		if c := cmp.Compare(bots.Weight(y.Signal), bots.Weight(x.Signal)); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(y.Clients, x.Clients); c != 0 {
-			return c
-		}
-		return cmp.Compare(x.Signal, y.Signal)
-	})
+	g.Traits = sortTraits(a.traits)
 	g.JA4s = g.JA4s[:0]
 	for k, v := range a.ja4 {
 		g.JA4s = append(g.JA4s, JA4Count{JA4: k, Clients: v})

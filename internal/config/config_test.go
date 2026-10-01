@@ -66,7 +66,9 @@ limits: { max_conns_global: 10, max_conns_per_asn: 5, max_conns_per_ip: 2, daily
 	if len(c.Proxies) != 2 || c.Proxies[0].String() != "10.0.0.1/32" || c.Proxies[1].String() != "::1/128" {
 		t.Fatalf("proxies: %v", c.Proxies)
 	}
-	if len(c.Exclude) != 2 || c.Exclude[0].String() != "198.51.100.7/32" || c.Exclude[1].String() != "2001:db8:5::/48" {
+	// Loopback (the host itself) is always appended.
+	if len(c.Exclude) != 4 || c.Exclude[0].String() != "198.51.100.7/32" || c.Exclude[1].String() != "2001:db8:5::/48" ||
+		c.Exclude[2].String() != "127.0.0.0/8" || c.Exclude[3].String() != "::1/128" {
 		t.Fatalf("exclude: %v", c.Exclude)
 	}
 	if err := c.RequireSecret(); err != nil {
@@ -78,7 +80,7 @@ limits: { max_conns_global: 10, max_conns_per_asn: 5, max_conns_per_ip: 2, daily
 	}
 	// The env var replaces the file's list.
 	c, err = Load(p, env(map[string]string{"LAWN_EXCLUDE_CIDRS": "203.0.113.0/24, 192.0.2.9"}))
-	if err != nil || len(c.Exclude) != 2 || c.Exclude[0].String() != "203.0.113.0/24" || c.Exclude[1].String() != "192.0.2.9/32" {
+	if err != nil || len(c.Exclude) != 4 || c.Exclude[0].String() != "203.0.113.0/24" || c.Exclude[1].String() != "192.0.2.9/32" {
 		t.Fatalf("exclude from env: %v %v", c.Exclude, err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -107,10 +108,16 @@ type Config struct {
 	Secret []byte `yaml:"-"`
 	// Proxies is TrustedProxies parsed.
 	Proxies []netip.Prefix `yaml:"-"`
-	// Exclude is ExcludeCIDRs parsed: the operator's own networks, kept out
-	// of the wall, the well-behaved page and private reports.
+	// Exclude is ExcludeCIDRs parsed, plus loopback (the host itself, e.g.
+	// deploy health checks): the operator's own networks, kept out of the
+	// wall, the well-behaved page and private reports.
 	Exclude []netip.Prefix `yaml:"-"`
 }
+
+// loopback is always operator traffic: only the host itself connects from
+// it (deploy health checks, a curl on the box). Visitors reach the app
+// through Caddy with their own address in X-Forwarded-For.
+var loopback = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
 
 // Default returns the spec defaults (SPEC.md section 9).
 func Default() Config {
@@ -267,6 +274,11 @@ func (c *Config) Validate() error {
 	for _, p := range c.Exclude {
 		if p.Bits() == 0 {
 			return fmt.Errorf("config: exclude_cidrs: %s would hide every visitor", p)
+		}
+	}
+	for _, p := range loopback {
+		if !slices.Contains(c.Exclude, p) {
+			c.Exclude = append(c.Exclude, p)
 		}
 	}
 	var errs []error

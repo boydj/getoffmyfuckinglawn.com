@@ -31,6 +31,8 @@ trusted_proxies: ["127.0.0.1/32", "::1/128"]
 # logged, but left out of the wall, the well-behaved page, `lawn bots` and
 # `lawn stats`, and hidden by `lawn visitors` unless you pass --operators.
 # Applies to history too. Reload with: systemctl reload lawn
+# Loopback (127.0.0.0/8, ::1) is always added: only the host itself, e.g.
+# deploy health checks, connects from there.
 exclude_cidrs: []
 # Name of the env var holding the HMAC secret that seeds the maze.
 server_secret_env: "LAWN_SECRET"

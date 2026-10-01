@@ -9,14 +9,16 @@ import (
 )
 
 type wbRow struct {
-	G        *WellBehavedGroup
-	Network  string // verified/unverifiable: first ASN seen
-	NetMore  int
-	UAs      []UAVisits
-	UAMore   int
-	UALen    int
-	CIDRs    []string
-	CIDRMore int
+	G         *WellBehavedGroup
+	Network   string // verified/unverifiable: first ASN seen
+	NetMore   int
+	UAs       []UAVisits
+	UAMore    int
+	UALen     int
+	CIDRs     []string
+	CIDRMore  int
+	Traits    []TraitCount // strongest first, capped
+	TraitMore int
 }
 
 type wbSection struct {
@@ -36,18 +38,18 @@ type wbView struct {
 }
 
 // wbCaps are the row / per-row limits tried in turn until the page fits.
-type wbCaps struct{ rows, uas, uaLen, cidrs int }
+type wbCaps struct{ rows, uas, uaLen, cidrs, traits int }
 
 var wbCapLevels = []wbCaps{
-	{50, 3, 120, 6},
-	{40, 2, 100, 4},
-	{30, 2, 80, 3},
-	{20, 1, 80, 2},
-	{15, 1, 60, 2},
-	{10, 1, 60, 1},
-	{5, 1, 60, 1},
-	{3, 1, 40, 1},
-	{1, 1, 40, 1},
+	{50, 3, 120, 6, 3},
+	{40, 2, 100, 4, 3},
+	{30, 2, 80, 3, 2},
+	{20, 1, 80, 2, 2},
+	{15, 1, 60, 2, 1},
+	{10, 1, 60, 1, 1},
+	{5, 1, 60, 1, 1},
+	{3, 1, 40, 1, 1},
+	{1, 1, 40, 1, 1},
 }
 
 // wbSections are the page sections, one per identity status, in the same
@@ -75,6 +77,8 @@ func wbRowFor(g *WellBehavedGroup, c wbCaps) wbRow {
 	row.UAMore = len(g.UAs) - len(row.UAs)
 	row.CIDRs = g.CIDRs[:min(c.cidrs, len(g.CIDRs))]
 	row.CIDRMore = len(g.CIDRs) - len(row.CIDRs)
+	row.Traits = g.Traits[:min(c.traits, len(g.Traits))]
+	row.TraitMore = len(g.Traits) - len(row.Traits)
 	return row
 }
 

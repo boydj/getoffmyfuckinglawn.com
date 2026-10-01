@@ -62,6 +62,13 @@ type WellBehavedGroup struct {
 	W          [NumWindows]Visits
 	CIDRs      []string   // sorted; obeys DisplayCIDR
 	UAs        []UAVisits // by requests, then UA; at most 50
+	// Observed traits (Options.Traits), like the wall's group pages.
+	Traits       []TraitCount
+	TraitClients int64
+	// WallSlug names the wall page of the same network (anonymous, spoofed)
+	// or claimed crawler (verified, unverifiable) when other clients of it
+	// requested /lawn/; "" when there is none.
+	WallSlug string
 }
 
 // All returns the all-time counts.
@@ -84,6 +91,16 @@ type WellBehavedEntry struct {
 	SawBait    bool     `json:"saw_bait"`
 	FirstSeen  string   `json:"first_seen"`
 	LastSeen   string   `json:"last_seen"`
+	// Observed traits over the raw log: how many of the TraitClients
+	// clients showed each (see the homepage methodology).
+	TraitClients int64       `json:"trait_clients"`
+	Traits       []FeedTrait `json:"traits"`
+}
+
+// FeedTrait is one observed trait in well-behaved.json.
+type FeedTrait struct {
+	Trait   string `json:"trait"` // signal name, e.g. "browser-ua-no-sec-fetch"
+	Clients int64  `json:"clients"`
 }
 
 // WellBehavedClients is the number of (ip, user agent) pairs listed.
@@ -96,15 +113,17 @@ func (r *Report) WellBehavedClients() int {
 }
 
 type politeAgg struct {
-	w       [NumWindows]Visits
-	clients int
-	cidrs   map[string]struct{}
-	uas     map[string]int64
-	asns    map[uint32]string
+	w            [NumWindows]Visits
+	clients      int
+	cidrs        map[string]struct{}
+	uas          map[string]int64
+	asns         map[uint32]string
+	traits       map[string]int64
+	traitClients int64
 }
 
 func newPoliteAgg() *politeAgg {
-	return &politeAgg{cidrs: map[string]struct{}{}, uas: map[string]int64{}, asns: map[uint32]string{}}
+	return &politeAgg{cidrs: map[string]struct{}{}, uas: map[string]int64{}, asns: map[uint32]string{}, traits: map[string]int64{}}
 }
 
 func (a *politeAgg) merge(o *politeAgg) {
@@ -123,6 +142,10 @@ func (a *politeAgg) merge(o *politeAgg) {
 			a.asns[k] = v
 		}
 	}
+	for k, v := range o.traits {
+		a.traits[k] += v
+	}
+	a.traitClients += o.traitClients
 }
 
 type politeAtom struct {
@@ -152,6 +175,12 @@ func (c *collector) flushPolite(p *pair) {
 		a.agg.cidrs[cidr] = struct{}{}
 	}
 	a.agg.uas[string(p.ua)] += p.vis[WAll].Requests
+	if t, ok := c.traits[[2]string{string(p.ip), string(p.ua)}]; ok {
+		a.agg.traitClients++
+		for _, s := range t.Signals {
+			a.agg.traits[s]++
+		}
+	}
 }
 
 func statusRank(s string) int {
@@ -210,6 +239,7 @@ func (g *WellBehavedGroup) finalize(a *politeAgg) {
 		g.ASNs = append(g.ASNs, ASNRef{ASN: k, Org: v, Label: ASNLabel(k, v)})
 	}
 	slices.SortFunc(g.ASNs, func(x, y ASNRef) int { return cmp.Compare(x.ASN, y.ASN) })
+	g.Traits, g.TraitClients = sortTraits(a.traits), a.traitClients
 }
 
 // spoofedClaim describes a spoofed group's claim without crediting the org.
@@ -254,9 +284,27 @@ func (c *collector) wellBehaved(r *Report) {
 		}
 		aggs[key].merge(a.agg)
 	}
+	// Wall pages to point at: by network for anonymous and spoofed groups,
+	// by claimed crawler for verified and unverifiable ones.
+	byASN := map[uint32]string{}
+	for _, g := range r.ASNs {
+		byASN[g.ASN] = g.Slug
+	}
+	byOrg := map[string]string{}
+	for _, gs := range [][]*Group{r.Verified, r.Unverifiable} {
+		for _, g := range gs {
+			byOrg[g.Kind+"\x00"+g.Name] = g.Slug
+		}
+	}
 	r.WellBehaved = make([]*WellBehavedGroup, 0, len(groups))
 	for k, g := range groups {
 		g.finalize(aggs[k])
+		switch g.Kind {
+		case logstore.StatusAnonymous, logstore.StatusSpoofed:
+			g.WallSlug = byASN[g.ASN]
+		default:
+			g.WallSlug = byOrg[g.Kind+"\x00"+g.ClaimedOrg]
+		}
 		r.WellBehaved = append(r.WellBehaved, g)
 	}
 	byRecent(r.WellBehaved)
@@ -264,16 +312,21 @@ func (c *collector) wellBehaved(r *Report) {
 	for _, g := range atoms {
 		m := g.W[WAll]
 		e := WellBehavedEntry{
-			Org:        g.Name,
-			ClaimedOrg: g.ClaimedOrg,
-			Status:     g.Kind,
-			ASNOrg:     g.ASNOrg,
-			CIDRs:      make([]string, 0, len(g.CIDRs)),
-			Robots:     m.Robots,
-			Requests:   m.Requests,
-			SawBait:    m.SawBait(),
-			FirstSeen:  rfc3339(m.FirstSeen),
-			LastSeen:   rfc3339(m.LastSeen),
+			Org:          g.Name,
+			ClaimedOrg:   g.ClaimedOrg,
+			Status:       g.Kind,
+			ASNOrg:       g.ASNOrg,
+			CIDRs:        make([]string, 0, len(g.CIDRs)),
+			Robots:       m.Robots,
+			Requests:     m.Requests,
+			SawBait:      m.SawBait(),
+			FirstSeen:    rfc3339(m.FirstSeen),
+			LastSeen:     rfc3339(m.LastSeen),
+			TraitClients: g.TraitClients,
+			Traits:       make([]FeedTrait, 0, len(g.Traits)),
+		}
+		for _, t := range g.Traits {
+			e.Traits = append(e.Traits, FeedTrait{Trait: t.Signal, Clients: t.Clients})
 		}
 		if g.ASN != 0 && g.ASN != logstore.OnionASN { // the onion pseudo-ASN is not a real AS
 			asn := g.ASN

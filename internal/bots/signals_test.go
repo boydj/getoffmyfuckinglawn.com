@@ -239,3 +239,36 @@ func TestPreSchemeRowsAreHTTPS(t *testing.T) {
 		t.Errorf("row without TLS judged as HTTPS: %v", tr[[2]string{"192.0.2.2", chrome}].Signals)
 	}
 }
+
+// A browser-like group merges every client on one network, so the detail
+// block says how many of them showed each signal, strongest first.
+func TestReasonCounts(t *testing.T) {
+	s, err := logstore.Open(filepath.Join(t.TempDir(), "lawn.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	chrome := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36"
+	row := func(ip, headers, al string) logstore.Request {
+		return logstore.Request{TsStart: now.Add(-time.Hour).UnixMilli(), IP: ip, ASN: 64999, ASNOrg: "NET", UserAgent: chrome,
+			Method: "GET", Path: "/lawn/x", Depth: 0, IsViolation: true, Status: 200, HeaderNames: headers,
+			AcceptLanguage: al, Proto: "HTTP/2.0", Scheme: "https"}
+	}
+	if err := s.InsertRequests(context.Background(), []logstore.Request{
+		row("192.0.2.1", "Accept,User-Agent", ""),
+		row("192.0.2.2", "Accept,Accept-Language,Sec-Fetch-Mode,User-Agent", "en"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Collect(context.Background(), Options{DB: s.DB(), Since: 24 * time.Hour, Now: func() time.Time { return now }})
+	if err != nil || len(r.Bots) != 1 {
+		t.Fatalf("%v %+v", err, r)
+	}
+	b := r.Bots[0]
+	got := reasonSummary(b)
+	want := SigNoSecFetch + " (1/2), " + SigNoAcceptLang + " (1/2), " + SigEntered + " (2/2)"
+	if got != want {
+		t.Errorf("summary:\n got %s\nwant %s", got, want)
+	}
+}
