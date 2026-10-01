@@ -5,7 +5,9 @@
 # can be brought up with `make deploy` alone.
 #
 # Expects the systemd units already in /etc/systemd/system and asn-refresh.sh,
-# backup.sh, reboot-check.sh, Caddyfile and torrc in /usr/local/lib/lawn.
+# backup.sh, reboot-check.sh, Caddyfile, torrc and caddy (lawn's Caddy build)
+# in /usr/local/lib/lawn. On cloud-init's first run, before any deploy, only
+# the packaged Caddy is installed.
 #
 # Env:
 #   LAWN_DOMAIN  site domain; written to /etc/lawn/caddy.env when set. Required
@@ -84,6 +86,30 @@ if ! installed caddy; then
 	log "installing caddy"
 	apt-get update -q
 	apt-get install -y -q caddy
+fi
+
+# lawn's own Caddy build (caddy/ in the repo: Caddy plus the JA4 plugin),
+# shipped by deploy.sh as $LIB/caddy. Installed the way Caddy documents for
+# custom builds of the Debian package: the packaged binary is diverted to
+# /usr/bin/caddy.default and alternatives point /usr/bin/caddy at
+# /usr/bin/caddy.custom. The package keeps its unit, user and upgrades
+# (which now land in caddy.default), and never overwrites our binary, so
+# Caddy itself is updated by deploying a newer caddy/go.mod.
+caddy_changed=0
+if [ -x "$LIB/caddy" ]; then
+	if ! dpkg-divert --list /usr/bin/caddy | grep -q 'caddy.default'; then
+		log "diverting the packaged caddy binary to /usr/bin/caddy.default"
+		dpkg-divert --quiet --divert /usr/bin/caddy.default --rename /usr/bin/caddy
+	fi
+	if ! cmp -s -- "$LIB/caddy" /usr/bin/caddy.custom; then
+		install -m 0755 -o root -g root "$LIB/caddy" /usr/bin/caddy.custom.new
+		mv -f -- /usr/bin/caddy.custom.new /usr/bin/caddy.custom
+		caddy_changed=1
+		log "installed lawn's caddy build: $(/usr/bin/caddy.custom version)"
+	fi
+	update-alternatives --quiet --install /usr/bin/caddy caddy /usr/bin/caddy.default 10
+	update-alternatives --quiet --install /usr/bin/caddy caddy /usr/bin/caddy.custom 50
+	update-alternatives --quiet --set caddy /usr/bin/caddy.custom
 fi
 
 # ---------------------------------------------------- user and directories
@@ -316,7 +342,13 @@ systemctl enable --quiet --now lawn-asn-refresh.timer lawn-verify-refresh.timer 
 	lawn-reboot-check.timer
 systemctl enable --quiet caddy.service
 if systemctl is-active --quiet caddy.service; then
-	systemctl reload caddy.service
+	# A reload keeps the old binary running; a new build needs a restart
+	# (which drops open connections, as restarting lawn does anyway).
+	if [ "$caddy_changed" = 1 ]; then
+		systemctl restart caddy.service
+	else
+		systemctl reload caddy.service
+	fi
 else
 	systemctl start caddy.service
 fi

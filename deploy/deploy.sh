@@ -15,8 +15,9 @@
 #   LAWN_DOMAIN       site domain; required on a host's first deploy
 #                     unless cloud-init already wrote it              optional
 #   LAWN_BINARY       binary to ship                                   default dist/lawn
+#   LAWN_CADDY        lawn's Caddy build to ship                       default dist/caddy
 #
-# The binary must already be built (make deploy does that).
+# The binaries must already be built (make deploy does that).
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,6 +29,7 @@ SSH_PORT="${SSH_PORT:-22}"
 SSH_KNOWN_HOSTS="${SSH_KNOWN_HOSTS:-}"
 LAWN_DOMAIN="${LAWN_DOMAIN:-}"
 LAWN_BINARY="${LAWN_BINARY:-$root/dist/lawn}"
+LAWN_CADDY="${LAWN_CADDY:-$root/dist/caddy}"
 
 die() { echo "deploy: $*" >&2; exit 1; }
 
@@ -41,6 +43,7 @@ if [ -n "$LAWN_DOMAIN" ] && ! [[ "$LAWN_DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A
 fi
 
 [ -x "$LAWN_BINARY" ] || die "$LAWN_BINARY not found; run 'make build-linux' first"
+[ -x "$LAWN_CADDY" ] || die "$LAWN_CADDY not found; run 'make build-caddy' first"
 for p in web/templates corpus config/crawlers.yaml config/config.example.yaml \
 	deploy/install.sh deploy/host-setup.sh deploy/Caddyfile deploy/torrc; do
 	[ -e "$root/$p" ] || die "missing $p"
@@ -61,6 +64,7 @@ stage="$(mktemp -d)"
 trap 'rm -rf -- "$stage"' EXIT
 mkdir -p "$stage/bin" "$stage/config" "$stage/deploy"
 cp -- "$LAWN_BINARY" "$stage/bin/lawn"
+cp -- "$LAWN_CADDY" "$stage/bin/caddy"
 cp -R -- "$root/web/templates" "$stage/templates"
 cp -R -- "$root/corpus" "$stage/corpus"
 cp -- "$root/config/crawlers.yaml" "$root/config/config.example.yaml" "$stage/config/"

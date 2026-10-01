@@ -121,4 +121,9 @@ ALTER TABLE requests ADD COLUMN country TEXT;
 	`
 ALTER TABLE requests ADD COLUMN scheme TEXT;
 `,
+	// 7: the JA4 fingerprint of the client's TLS ClientHello, from lawn's
+	// Caddy build (HTTPS over TCP only). Private analysis only.
+	`
+ALTER TABLE requests ADD COLUMN ja4 TEXT;
+`,
 }

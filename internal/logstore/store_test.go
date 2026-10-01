@@ -102,3 +102,20 @@ func TestPageIDs(t *testing.T) {
 		t.Errorf("empty country must be NULL: %v %v", cc, err)
 	}
 }
+
+func TestJA4Column(t *testing.T) {
+	s := openTemp(t)
+	fp := "t13d1516h2_8daaf6152771_e5627efa2ab1"
+	if err := s.InsertRequests(context.Background(), []Request{
+		{TsStart: 1, IP: "203.0.113.1", Path: "/a", Depth: -1, JA4: fp},
+		{TsStart: 2, IP: "203.0.113.1", Path: "/b", Depth: -1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]sql.NullString{"/a": {String: fp, Valid: true}, "/b": {}} {
+		var got sql.NullString
+		if err := s.DB().QueryRow(`SELECT ja4 FROM requests WHERE path = ?`, path).Scan(&got); err != nil || got != want {
+			t.Errorf("%s: ja4 %v %v", path, got, err)
+		}
+	}
+}

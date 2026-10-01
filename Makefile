@@ -10,6 +10,10 @@ TOFU    ?= tofu
 INFRA   := infra
 DIST    := dist
 BIN     := $(DIST)/lawn
+# lawn's own Caddy build (caddy/: Caddy plus the JA4 plugin), a separate Go
+# module so Caddy's dependencies stay out of the app's.
+CADDY_DIR := caddy
+CADDY_BIN := $(DIST)/caddy
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
@@ -35,7 +39,7 @@ SSH_OPTS    := -p $(SSH_PORT) -o StrictHostKeyChecking=accept-new $(if $(SSH_KEY
 # Local dev (`make run`): throwaway state under data/dev (gitignored).
 DEV_DIR := data/dev
 
-.PHONY: help test vet vulncheck lint fmt build build-linux infra plan validate deploy \
+.PHONY: help test vet vulncheck lint fmt build build-linux build-caddy infra plan validate deploy \
 	logs ssh patch-status destroy loadtest run clean require-host
 
 help: ## Show this help
@@ -44,12 +48,15 @@ help: ## Show this help
 
 ## ---------------------------------------------------------------- Go
 
-test: ## Unit + integration tests (race detector when cgo is available)
+test: ## Unit + integration tests (race detector when cgo is available), app and Caddy plugin
 	$(GO) test $(RACE) -count=1 -tags '$(TEST_TAGS)' ./...
+	$(GO) -C $(CADDY_DIR) test $(RACE) -count=1 ./...
 
-vet: ## go vet + staticcheck
+vet: ## go vet + staticcheck, app and Caddy plugin
 	$(GO) vet -tags '$(TEST_TAGS)' ./...
 	staticcheck -tags '$(TEST_TAGS)' ./...
+	$(GO) -C $(CADDY_DIR) vet ./...
+	cd $(CADDY_DIR) && staticcheck ./...
 
 # govulncheck must judge the standard library of the toolchain that builds the
 # release binary, i.e. go.mod's toolchain line, not whatever go is on PATH.
@@ -57,6 +64,7 @@ GO_TOOLCHAIN := $(shell $(GO) mod edit -json 2>/dev/null | sed -n 's/.*"Toolchai
 
 vulncheck: ## govulncheck: known vulnerabilities in the Go toolchain and modules we call
 	GOTOOLCHAIN=$(or $(GO_TOOLCHAIN),auto) $(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	cd $(CADDY_DIR) && GOTOOLCHAIN=$(or $(GO_TOOLCHAIN),auto) $(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 lint: vet ## vet + gofmt, shellcheck, tofu fmt
 	@out="$$(gofmt -l $$(git ls-files -co --exclude-standard '*.go'))"; \
@@ -75,6 +83,9 @@ build: ## Build for this machine into bin/lawn
 
 build-linux: ## Static linux/amd64 release binary into dist/lawn
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/lawn
+
+build-caddy: ## lawn's Caddy (Caddy + JA4 plugin) for linux/amd64 into dist/caddy
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) -C $(CADDY_DIR) build -trimpath -ldflags '-s -w' -o $(abspath $(CADDY_BIN)) .
 
 ## ---------------------------------------------------------------- Infra
 
@@ -102,9 +113,9 @@ destroy: ## tofu destroy: deletes the instance, firewall, SSH key and DNS zone
 require-host:
 	@test -n "$(DEPLOY_HOST)" || { echo "DEPLOY_HOST is empty: run 'make infra' first or set DEPLOY_HOST=<ip>"; exit 1; }
 
-deploy: require-host build-linux ## Build, ship to the host over SSH, restart, health-check
+deploy: require-host build-linux build-caddy ## Build, ship to the host over SSH, restart, health-check
 	DEPLOY_HOST='$(DEPLOY_HOST)' DEPLOY_USER='$(DEPLOY_USER)' SSH_KEY='$(SSH_KEY)' \
-		SSH_PORT='$(SSH_PORT)' LAWN_DOMAIN='$(LAWN_DOMAIN)' LAWN_BINARY='$(BIN)' \
+		SSH_PORT='$(SSH_PORT)' LAWN_DOMAIN='$(LAWN_DOMAIN)' LAWN_BINARY='$(BIN)' LAWN_CADDY='$(CADDY_BIN)' \
 		deploy/deploy.sh
 
 logs: require-host ## Follow the lawn journal on the host

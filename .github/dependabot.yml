@@ -10,6 +10,13 @@ updates:
     schedule:
       interval: "daily"
 
+  # lawn's Caddy build (Caddy and its dependencies). The host runs this
+  # binary instead of the packaged one, so Caddy security fixes arrive here.
+  - package-ecosystem: "gomod"
+    directory: "/caddy"
+    schedule:
+      interval: "daily"
+
   # Action versions used by CI (actions/checkout, setup-go, ...).
   - package-ecosystem: "github-actions"
     directory: "/"
