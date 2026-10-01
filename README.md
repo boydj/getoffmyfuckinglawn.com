@@ -71,6 +71,7 @@ corpus/              public-domain training texts
 config/              config.example.yaml, crawlers.yaml
 infra/               OpenTofu: Vultr instance, firewall, DNS, SSH key, cloud-init
 deploy/              systemd units + timers, Caddyfile, host setup / deploy scripts
+caddy/               lawn's Caddy build (own Go module): Caddy + JA4 TLS fingerprint plugin
 tools/               load test
 .github/workflows/   CI (lint, test, build, tofu validate) and manual deploy
 ```
@@ -144,7 +145,8 @@ Everything goes through `make`. The target is one dedicated Vultr instance that 
   - puts the secret in `/etc/lawn/env`;
   - runs `deploy/host-setup.sh`, which installs Caddy (official apt repo), Tor (the Tor Project's apt repo, signing key pinned by fingerprint), sqlite3, unattended-upgrades and needrestart, creates the `lawn` user and directories, caps journald, tunes socket sysctls, enables the timers, and downloads the iptoasn.com ASN dataset.
 - **`make deploy`**
-  - cross-compiles a static linux/amd64 binary and ships it, the templates, the corpus, `crawlers.yaml` and the `deploy/` files over one SSH connection;
+  - cross-compiles static linux/amd64 binaries of lawn and of lawn's Caddy build (`caddy/`, Caddy plus the JA4 plugin) and ships them, the templates, the corpus, `crawlers.yaml` and the `deploy/` files over one SSH connection;
+  - installs that Caddy in place of the packaged binary, the way Caddy documents for custom builds: `dpkg-divert` moves the package's binary to `/usr/bin/caddy.default`, and `update-alternatives` points `/usr/bin/caddy` at `/usr/bin/caddy.custom`. The package keeps its unit and user;
   - re-runs the idempotent host setup, preflights the new binary, swaps it in atomically and restarts;
   - health-checks the service and rolls back to the previous binary if the check fails.
 
@@ -192,7 +194,7 @@ make deploy
 ```
 
 Safe to re-run.
-- **Replaced every time:** the binary (the previous one is kept as `lawn.prev`), templates, corpus, `crawlers.yaml`, units, timers, scripts and the Caddyfile.
+- **Replaced every time:** the binary (the previous one is kept as `lawn.prev`), templates, corpus, `crawlers.yaml`, units, timers, scripts and the Caddyfile. Caddy is restarted (not reloaded) when its binary changed.
 - **`/etc/lawn/config.yaml`:** created on the first deploy, then never overwritten. The latest example sits next to it as `config.example.yaml`, and the deploy prints a note when the top-level keys drift.
 - **`/etc/lawn/env` (the secret):** never touched. Changing the secret changes every maze URL.
 - **Restarts:** a restart drops in-flight drips; crawlers come back on their own.
@@ -214,10 +216,11 @@ SSH is restricted to `admin_cidrs`, which doesn't include GitHub-hosted runners,
 | `/etc/lawn/env` | `LAWN_SECRET=...`, 0640 root:lawn, written once |
 | `/etc/lawn/caddy.env` | `LAWN_DOMAIN=...` for the Caddyfile |
 | `/opt/lawn/{corpus,templates}` | app files (WorkingDirectory) |
-| `/var/lib/lawn/` | `lawn.db`, `ip2asn-combined.tsv.gz`, `public/`, `ranges/`, `backups/` |
+| `/var/lib/lawn/` | `lawn.db`, `ip2asn-combined.tsv.gz`, `hosting-asns.txt`, `public/`, `ranges/`, `backups/` |
+| `/usr/bin/caddy.custom` | lawn's Caddy build (`/usr/bin/caddy` points here; the packaged binary is `caddy.default`) |
 
 - **Listeners:** the app listens on `127.0.0.1:8080` (site) and `127.0.0.1:9090` (metrics).
-- **Caddy** terminates TLS and proxies to `:8080` unbuffered (`flush_interval -1`, no compression, no access log). It redirects `www` to the apex.
+- **Caddy** terminates TLS and proxies to `:8080` unbuffered (`flush_interval -1`, no compression, no access log). It redirects `www` to the apex. Its `ja4` listener wrapper records each TCP connection's TLS ClientHello, and the `ja4` directive passes the [JA4 fingerprint](https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md) to the app as `X-Lawn-Client-JA4` (stored in `requests.ja4`; HTTP/3 requests have none).
 - **Service sandbox:** `lawn` runs as an unprivileged, sandboxed systemd service. It can write only under `/var/lib/lawn` and cannot reach the cloud metadata service, which holds the user-data and so the secret.
 
 ### Logs and operations
@@ -239,19 +242,19 @@ lawn visitors --ip 198.51.100.9 --since all          # one client's full timelin
 **Viewing the maze without being logged.** The admin listener (`admin_listen`, localhost only) also serves the maze: `/lawn/...` renders exactly what the public site would, all at once, with no drip, no limits and no log row. Open an SSH tunnel with `ssh -L 9090:127.0.0.1:9090 root@<ip>` and browse `http://localhost:9090/`. That page lists the sitemap's entry points, and the links on each maze page keep working. `/metrics` is on the same port. Browsing the public site from your own networks is fine too once they are in `exclude_cidrs`.
 
 **Timers**
-- **Weekly iptoasn.com refresh:** validates gzip, size and format, swaps the file in atomically, then reloads lawn.
+- **Weekly iptoasn.com refresh:** validates gzip, size and format, swaps the file in atomically, then reloads lawn. The same unit then fetches [X4BNet's datacenter ASN list](https://github.com/X4BNet/lists_vpn) (MIT) into `hosting-asns.txt` for `lawn bots`; a failed download keeps the old file.
 - **Daily `lawn verify-refresh`.**
 - **Nightly `VACUUM INTO` backup:** `/var/lib/lawn/backups/lawn-YYYY-MM-DD.db`, `quick_check`ed, newest 7 kept.
 
 **Patching and reboots.** The host keeps itself patched:
-- **Daily unattended upgrades:** Debian security updates, point releases and `-updates`, plus Caddy from its official repository.
+- **Daily unattended upgrades:** Debian security updates, point releases and `-updates`. The Caddy package still updates, but the binary that runs is lawn's own build, so Caddy is patched by redeploying (below).
 - **needrestart:** restarts any service still using a replaced library (OpenSSL, libc, …) right after each upgrade.
 - **Reboots at 04:30 UTC** when an upgrade asks for one. `lawn-reboot-check.timer` runs at 04:45 as a backstop: it also reboots when a newer kernel is installed than the one running. If a reboot didn't switch to the new kernel, it fails the unit instead of rebooting every day.
 - A reboot drops in-flight drips for about a minute; `lawn` and Caddy come back on their own.
 
 `make patch-status` shows the current state. `systemctl --failed` on the host surfaces a stuck reboot check.
 
-**The `lawn` binary** is patched by redeploying. CI runs `govulncheck` against the Go toolchain pinned in `go.mod` on every push and weekly, and a new Go vulnerability shows up as a failed scheduled run in GitHub's email. Dependabot opens PRs for Go modules (daily) and Actions versions (weekly). To patch: bump the `toolchain` line in `go.mod` (or merge the Dependabot PR), then run `make deploy`.
+**The `lawn` and Caddy binaries** are patched by redeploying. CI runs `govulncheck` on both modules (the app and `caddy/`) against the pinned Go toolchain on every push and weekly, and a new vulnerability shows up as a failed scheduled run in GitHub's email. Dependabot opens PRs for both modules' Go dependencies, Caddy included (daily), and Actions versions (weekly). To patch: bump the `toolchain` line in `go.mod`/`caddy/go.mod` (or merge the Dependabot PR), then run `make deploy`.
 
 **Why requests ended.** Every `/lawn/` row records an `end_reason`:
 - `complete`: dripped to the end.
@@ -274,12 +277,26 @@ GROUP BY 1,2 ORDER BY n DESC LIMIT 30;"
 `/metrics` also exposes `lawn_drip_end_total{reason=...}` and `lawn_patience_tracked`.
 
 **Spotting new bots (`lawn bots`).** Every visitor is logged and classified, not only violators, and every client IP gets a reverse-DNS lookup. `lawn bots` (private, never published) groups every client that looks automated by the product name in its user agent:
-- **What counts as automated:** the UA names a bot or an HTTP library, or the client fetched `robots.txt`, entered `/lawn/`, sent no `Accept-Language`, or has a crawler-looking reverse-DNS name.
+- **What counts as automated:** the UA names a bot or an HTTP library, or the client fetched `robots.txt`, entered `/lawn/`, sent no `Accept-Language`, or has a crawler-looking reverse-DNS name. More signals catch scrapers that claim to be browsers (each is a fact, none alone a verdict):
+
+  | Signal | Weight | What it means |
+  |---|---|---|
+  | `browser-ua-tls-like-library:<lib>` | 3 | its JA4 TLS fingerprint was also used by an HTTP library (python-requests, Go, curl…) in the same window |
+  | `browser-ua-tls-offers-no-h2` | 3 | its TLS ClientHello doesn't offer HTTP/2; every browser does |
+  | `browser-ua-no-sec-fetch` | 3 | a browser version that sends `Sec-Fetch-*` to HTTPS sites (Chrome 76+, Edge 79+, Firefox 90+, Safari 16.4+) never did |
+  | `follows-links-before-page-ends` | 3 | fetched most of a page's links while that page was still dripping (`OPEN`) |
+  | `browser-ua-over-https-http/1.1` | 2 | negotiated HTTP/1.1 although Caddy offers h2 |
+  | `fast-maze-walk` | 2 | 30+ maze pages within one minute |
+  | `metronome-timing` | 2 | 20+ gaps between maze fetches, evenly spaced (coefficient of variation < 0.25) |
+  | `browser-ua-head-requests`, `deep-in-maze` (10+), `mostly-errors` | 1 | supporting |
+  | `hosting-network`, `browser-ua-no-favicon` | 1 | supporting only: never list a client on their own (VPN users, cached favicons) |
+
+  The existing signals weigh 3 (UA names a bot or library), 2 (robots.txt, no `Accept-Language`, crawler-looking PTR) and 1 (entered `/lawn/`). `SCORE` adds up a group's signals.
 - **Browser-looking UAs** with those signals are grouped by network instead, which is how headless scrapers show up.
 - **Each group gets a verdict:** `compliant`, `entered /lawn/`, `read robots.txt, entered /lawn/`, or `never fetched robots.txt`.
 - **Flags:** `NEW` for groups first seen in the last 7 days, `UNKNOWN` for groups not in `crawlers.yaml`.
 - **`OPEN` column (frontier amplification):** every maze link carries a short id of the page it came from, and each `/lawn/` row logs `page_id` and `parent_id`. `OPEN` is the share of followed links that the same user agent fetched while the parent page was *still dripping*, from any of its IPs. A high share means the crawler harvests links from the leading `<nav>` and fans out, so each held connection spawns more; a low share means it waits for pages to finish. The detail block gives the raw counts.
-- **Detail blocks** for unknown and new groups: sample UA, contact URL, reverse-DNS domains, networks, header fingerprint, HTTP/TLS versions, and a `crawlers.yaml` stub to complete from the vendor's docs.
+- **Detail blocks** for unknown and new groups: sample UA, contact URL, reverse-DNS domains, networks, header fingerprint, HTTP/TLS versions, JA4 fingerprints, fastest pace, and a `crawlers.yaml` stub to complete from the vendor's docs.
 
 ```sh
 lawn bots --since 7d --unknown     # what's new that we don't recognise?

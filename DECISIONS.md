@@ -347,3 +347,47 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
   - the catalogue lists a shortened token our pattern contains (`NotebookLM`);
   - the list isn't vendor-published;
   - the user agent was declined above.
+
+## Scrapers that claim to be browsers: JA4, browser consistency, timing, hosting (follow-up)
+- **Our own scoring, not a forked bot-detection project.** Existing tools are built for other jobs:
+  - Anubis and go-away challenge visitors, which would keep scrapers out of the tarpit.
+  - CrowdSec is a whole blocking engine.
+  - BotD needs JavaScript, and the site has none.
+
+  Every anonymous group on the wall already ignored robots.txt. The only question is person or software, and the stored logs answer it after the fact. So `lawn bots` gained named signals with weights. Their ideas come from the robot-detection literature (Tan & Kumar 2002; Doran & Gokhale's survey). The report stays private, and the publication rules are unchanged.
+- **JA4 only, implemented from the specification.** FoxIO's JA4 (TLS client) is BSD-3; the rest of JA4+ (JA4H, JA4S, …) is under the FoxIO License and is not used.
+  - `caddy/ja4` is an independent implementation of `technical_details/JA4.md`, with the license kept alongside.
+  - It reproduces both of the spec's worked examples (`t13d1516h2_8daaf6152771_e5627efa2ab1` and the no-signature-algorithms `…_6d807ffa2a79`).
+  - In the sandbox it matched an independent library (`github.com/GergelyGombai/ja4plus`) exactly on curl (HTTP/1.1 and h2), Python and Chromium handshakes.
+- **Fingerprinting happens in Caddy, the TLS endpoint.**
+  - A listener wrapper placed before `tls` copies the bytes of each TCP connection's ClientHello as the handshake reads them, then stops.
+  - The `ja4` directive uses `Server.RegisterConnContext` to find the connection. It replaces any client-supplied `X-Lawn-Client-JA4` and removes it when there is none.
+  - The plain-HTTP sites strip that header too. The app accepts it only from the trusted proxy and only in JA4's exact shape, into `requests.ja4` (migration 7).
+  - QUIC doesn't pass through listener wrappers, so HTTP/3 requests carry no JA4. Browsers move to HTTP/3 via `Alt-Svc`, so a browser's later requests often have none. The signals only use the fingerprints present.
+- **`caddy/` is its own Go module with its own `main.go`**, instead of an xcaddy build. That keeps Caddy's large dependency tree out of the app's `go.mod`, and lets `go.sum` and Dependabot pin and update Caddy (v2.11.6). `make test`, `make vet` and `make vulncheck` cover both modules.
+- **Installed the way Caddy documents for custom builds on Debian.**
+  - `dpkg-divert` moves the package's binary to `caddy.default`, and `update-alternatives` selects `caddy.custom`.
+  - The package keeps its unit and user, and its upgrades no longer replace the running binary.
+  - The trade-off: Caddy security fixes now arrive by redeploying, after Dependabot or govulncheck flags them, instead of through unattended upgrades.
+  - Caddy restarts when its binary changes. A reload would keep the old binary.
+  - On a host's first boot, cloud-init still installs only the packaged Caddy. No Caddyfile is installed until the first deploy, which brings the custom binary.
+- **Hosting networks from X4BNet's datacenter ASN list (MIT)**, not its IP list.
+  - Every request already has an ASN, and the ASN list is small (about 950 lines).
+  - It is downloaded at runtime by the weekly ASN unit (`hosting-refresh.sh`, failure tolerated) and never committed.
+  - It is supporting evidence only, because VPN users sit on hosting networks.
+- **Signals and thresholds.** A person clicking through the maze waits for each dripping page, so the behaviour thresholds sit well beyond that:
+  - 30 maze pages in a minute;
+  - 20 or more gaps with a coefficient of variation under 0.25;
+  - depth 10;
+  - following most of a page's links (5 or more) before it finished.
+- **The browser checks are judged on HTTPS only.** Browsers send `Sec-Fetch-*` only to secure origins, and only HTTPS offers h2. The `Sec-Fetch-*` minimum versions are Chrome 76, Edge 79, Firefox 90 and Safari 16.4. iOS wrapper browsers (CriOS, FxiOS, …) are not judged, because they don't name their WebKit version.
+- **"TLS like a library"** compares a browser-claiming client's JA4 with the JA4s that clients naming an HTTP library sent in the same window. Headless browsers are not libraries (they share real browsers' TLS), so they never mark a real Chrome.
+- **Weights:**
+  - 3: no browser does this;
+  - 2: rare for a person;
+  - 1: supporting.
+
+  `hosting-network` and `browser-ua-no-favicon` never list a client on their own. No page declares an icon, so browsers fetch `/favicon.ico` themselves, but they cache it.
+- **Untested:**
+  - the divert/alternatives install and the custom Caddy on the real host;
+  - JA4 behind real-world middleboxes.
