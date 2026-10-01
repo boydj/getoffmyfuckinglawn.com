@@ -208,6 +208,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			rec.Proto = truncate(p, 16)
 		}
 		rec.TLS = truncate(strings.TrimSpace(r.Header.Get("X-Lawn-Client-Tls")), 96)
+		rec.JA4 = validJA4(r.Header.Get("X-Lawn-Client-Ja4"))
 	}
 	var sent int64
 	status := http.StatusOK
@@ -465,6 +466,29 @@ var proxyAdded = map[string]bool{
 	"Via":                 true,
 	"X-Lawn-Client-Proto": true,
 	"X-Lawn-Client-Tls":   true,
+	"X-Lawn-Client-Ja4":   true,
+}
+
+// validJA4 returns s if it has the shape of a JA4 fingerprint
+// ("t13d1516h2_8daaf6152771_e5627efa2ab1"), else "". Caddy is trusted, but
+// the column should only ever hold fingerprints.
+func validJA4(s string) string {
+	if len(s) != 36 || s[10] != '_' || s[23] != '_' {
+		return ""
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if i == 10 || i == 23 {
+			continue
+		}
+		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'z') {
+			return ""
+		}
+		if i > 10 && c > 'f' { // hash parts are lower-case hex
+			return ""
+		}
+	}
+	return s
 }
 
 // headerNames returns the names of the headers the client sent, sorted and

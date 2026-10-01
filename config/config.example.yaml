@@ -39,6 +39,10 @@ server_secret_env: "LAWN_SECRET"
 db_path: "/var/lib/lawn/lawn.db"
 # iptoasn.com ip2asn-combined dataset; refreshed weekly by lawn-asn-refresh.timer.
 asn_db_path: "/var/lib/lawn/ip2asn-combined.tsv.gz"
+# X4BNet's list of datacenter/hosting ASNs (MIT), refreshed by the same timer.
+# Only `lawn bots` reads it, as one hint among several; a missing file just
+# leaves that hint out.
+hosting_asns_path: "/var/lib/lawn/hosting-asns.txt"
 # Output of the wall-of-shame builder (served under /shame/).
 public_dir: "/var/lib/lawn/public"
 # Public-domain training texts for the Markov chain.

@@ -15,6 +15,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/boydj/getoffmyfuckinglawn.com/internal/bots"
 	"github.com/boydj/getoffmyfuckinglawn.com/internal/logstore"
 )
 
@@ -37,6 +38,18 @@ type Options struct {
 	// rows are skipped entirely: not on the wall, the well-behaved page,
 	// the feed, the blocklist or in totals.
 	Exclude []netip.Prefix
+	// Traits holds each (ip, user agent)'s observed traits (bots.Traits),
+	// shown on group pages as counts. nil = no traits section.
+	Traits map[[2]string]bots.ClientTraits
+	// RawDays is retention.raw_requests_days: how far back Traits reach.
+	RawDays int
+}
+
+func (o Options) rawDays() int {
+	if o.RawDays <= 0 {
+		return 90
+	}
+	return o.RawDays
 }
 
 // StatusUserTriggered marks verified user-initiated fetchers whose vendor
@@ -158,8 +171,26 @@ type Group struct {
 	Paths      []string // recent sample /lawn/ paths, newest first
 	Daily      []Day    // ascending by date
 	Members    []*Group // KindASN only: per-(status, org) atoms in this ASN
+	// Observed traits over the raw log (see Options.Traits).
+	Traits       []TraitCount // by weight, then clients
+	TraitClients int64        // clients (address + user agent) with raw-log detail
+	Pace         int64        // most /lawn/ pages one client fetched within a minute
+	JA4s         []JA4Count   // most common TLS fingerprints, by clients
 
 	agg *agg
+}
+
+// TraitCount is one observed trait and how many of a group's clients
+// showed it.
+type TraitCount struct {
+	Signal  string // bots.Sig*; SigTLSLibrary carries the library name
+	Clients int64
+}
+
+// JA4Count is a TLS fingerprint and how many clients used it.
+type JA4Count struct {
+	JA4     string
+	Clients int64
 }
 
 // All returns the all-time metrics.
@@ -223,6 +254,11 @@ type agg struct {
 	daily  map[int64]*dayAgg // days since epoch
 	asns   map[uint32]string
 	status map[string]struct{}
+	// observed traits (raw-log clients only)
+	traits       map[string]int64
+	traitClients int64
+	pace         int64
+	ja4          map[string]int64
 }
 
 func newAgg() *agg {
@@ -232,7 +268,20 @@ func newAgg() *agg {
 		daily:  map[int64]*dayAgg{},
 		asns:   map[uint32]string{},
 		status: map[string]struct{}{},
+		traits: map[string]int64{},
+		ja4:    map[string]int64{},
 	}
+}
+
+func (a *agg) addTraits(t bots.ClientTraits) {
+	a.traitClients++
+	for _, s := range t.Signals {
+		a.traits[s]++
+	}
+	for _, fp := range t.JA4s {
+		a.ja4[fp]++
+	}
+	a.pace = max(a.pace, t.PerMinute)
 }
 
 func (a *agg) day(d int64) *dayAgg {
@@ -283,6 +332,14 @@ func (a *agg) merge(o *agg) {
 	for k := range o.status {
 		a.status[k] = struct{}{}
 	}
+	for k, v := range o.traits {
+		a.traits[k] += v
+	}
+	for k, v := range o.ja4 {
+		a.ja4[k] += v
+	}
+	a.traitClients += o.traitClients
+	a.pace = max(a.pace, o.pace)
 	a.addPaths(o.paths)
 }
 
@@ -299,6 +356,7 @@ type atom struct {
 }
 
 type collector struct {
+	traits map[[2]string]bots.ClientTraits
 	exempt func(ua string) bool
 	skip   *logstore.IPSet // operator networks
 	gapMs  int64
@@ -587,6 +645,9 @@ func (c *collector) flushPair(p *pair) {
 		a.agg.cidrs[cidr] = struct{}{}
 	}
 	a.agg.uas[string(p.ua)] += int64(countViolations(ev))
+	if t, ok := c.traits[[2]string{string(p.ip), string(p.ua)}]; ok {
+		a.agg.addTraits(t)
+	}
 	n := min(p.ringN, maxPaths)
 	ps := make([]pathSample, 0, n)
 	for i := range n {
@@ -671,7 +732,7 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 		return nil, errors.New("shame: nil DB")
 	}
 	now := opt.now().UTC()
-	c := &collector{exempt: opt.RobotsExempt, skip: logstore.NewIPSet(opt.Exclude), gapMs: opt.gap().Milliseconds(), atoms: map[atomKey]*atom{}, polite: map[atomKey]*politeAtom{}}
+	c := &collector{traits: opt.Traits, exempt: opt.RobotsExempt, skip: logstore.NewIPSet(opt.Exclude), gapMs: opt.gap().Milliseconds(), atoms: map[atomKey]*atom{}, polite: map[atomKey]*politeAtom{}}
 	for w, d := range windowDur {
 		if d > 0 {
 			c.cut[w] = now.Add(-d).UnixMilli()
@@ -745,6 +806,31 @@ func (g *Group) finalize() {
 		g.ASNs = append(g.ASNs, ASNRef{ASN: k, Org: v, Label: ASNLabel(k, v)})
 	}
 	slices.SortFunc(g.ASNs, func(x, y ASNRef) int { return cmp.Compare(x.ASN, y.ASN) })
+	g.TraitClients, g.Pace = a.traitClients, a.pace
+	g.Traits = g.Traits[:0]
+	for k, v := range a.traits {
+		g.Traits = append(g.Traits, TraitCount{Signal: k, Clients: v})
+	}
+	slices.SortFunc(g.Traits, func(x, y TraitCount) int {
+		if c := cmp.Compare(bots.Weight(y.Signal), bots.Weight(x.Signal)); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(y.Clients, x.Clients); c != 0 {
+			return c
+		}
+		return cmp.Compare(x.Signal, y.Signal)
+	})
+	g.JA4s = g.JA4s[:0]
+	for k, v := range a.ja4 {
+		g.JA4s = append(g.JA4s, JA4Count{JA4: k, Clients: v})
+	}
+	slices.SortFunc(g.JA4s, func(x, y JA4Count) int {
+		if c := cmp.Compare(y.Clients, x.Clients); c != 0 {
+			return c
+		}
+		return cmp.Compare(x.JA4, y.JA4)
+	})
+	g.JA4s = g.JA4s[:min(len(g.JA4s), 5)]
 }
 
 // byHeld sorts by all-time time held, then pages, then name.

@@ -1,5 +1,9 @@
 # Caddy front end for lawn. Installed to /etc/caddy/Caddyfile.
 #
+# Needs lawn's own Caddy build (caddy/, installed by host-setup.sh), which
+# adds the ja4 listener wrapper and directive; the packaged binary rejects
+# this file.
+#
 # {$LAWN_DOMAIN} is substituted by Caddy from its environment, which a systemd
 # drop-in (/etc/systemd/system/caddy.service.d/lawn.conf) loads from
 # /etc/lawn/caddy.env. Caddy obtains and renews certificates automatically.
@@ -8,6 +12,14 @@
 		# HTTP/3 needs UDP 443 open in the Vultr firewall and ufw (both done
 		# by infra/ and host-setup.sh). Caddy advertises it with Alt-Svc.
 		protocols h1 h2 h3
+		# Record each TCP connection's TLS ClientHello for its JA4
+		# fingerprint: ja4 must come before tls to see the raw bytes. QUIC
+		# (HTTP/3) does not pass through listener wrappers, so those
+		# requests carry no fingerprint.
+		listener_wrappers {
+			ja4
+			tls
+		}
 		timeouts {
 			# Slowloris guard on Caddy's side. No read_body/write timeouts: the
 			# maze deliberately keeps responses open for up to 10 minutes.
@@ -67,6 +79,7 @@
 	reverse_proxy 127.0.0.1:8080 {
 		import lawn_proxy
 		header_up -X-Lawn-Client-TLS
+		header_up -X-Lawn-Client-JA4
 	}
 }
 
@@ -75,6 +88,10 @@ www.{$LAWN_DOMAIN} {
 }
 
 {$LAWN_DOMAIN} {
+	# The connection's JA4 TLS fingerprint, for telling scrapers that claim
+	# to be browsers from browsers. Replaces any client-supplied value and
+	# is removed when there is none (HTTP/3).
+	ja4 X-Lawn-Client-JA4
 	reverse_proxy 127.0.0.1:8080 {
 		import lawn_proxy
 		header_up X-Lawn-Client-TLS "{http.request.tls.version} {http.request.tls.cipher_suite} {http.request.tls.proto}"

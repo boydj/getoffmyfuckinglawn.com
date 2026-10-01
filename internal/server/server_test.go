@@ -457,6 +457,7 @@ func TestFingerprintCapture(t *testing.T) {
 		"Via":                 "2.0 Caddy",
 		"X-Lawn-Client-Proto": "HTTP/2.0",
 		"X-Lawn-Client-Tls":   "tls1.3 TLS_AES_128_GCM_SHA256 h2",
+		"X-Lawn-Client-Ja4":   "t13d1516h2_8daaf6152771_e5627efa2ab1",
 		"Sec-Fetch-Mode":      "navigate",
 	})
 	if viaCaddy.HeaderNames != "Accept,Sec-Fetch-Mode,User-Agent" {
@@ -465,14 +466,35 @@ func TestFingerprintCapture(t *testing.T) {
 	if viaCaddy.Proto != "HTTP/2.0" || viaCaddy.TLS != "tls1.3 TLS_AES_128_GCM_SHA256 h2" {
 		t.Errorf("proto/tls via proxy: %q %q", viaCaddy.Proto, viaCaddy.TLS)
 	}
+	if viaCaddy.JA4 != "t13d1516h2_8daaf6152771_e5627efa2ab1" {
+		t.Errorf("ja4 via proxy: %q", viaCaddy.JA4)
+	}
 	// Direct, untrusted peer: its X-Lawn-* claims are ignored (and kept in
 	// the header list, since the client really sent them).
-	direct := send("198.51.100.9:1", map[string]string{"X-Lawn-Client-Tls": "forged", "X-Lawn-Client-Proto": "HTTP/9"})
-	if direct.TLS != "" || direct.Proto != "HTTP/1.1" {
+	direct := send("198.51.100.9:1", map[string]string{"X-Lawn-Client-Tls": "forged", "X-Lawn-Client-Proto": "HTTP/9",
+		"X-Lawn-Client-Ja4": "t13d1516h2_8daaf6152771_e5627efa2ab1"})
+	if direct.TLS != "" || direct.Proto != "HTTP/1.1" || direct.JA4 != "" {
 		t.Errorf("untrusted peer must not set proto/tls: %q %q", direct.Proto, direct.TLS)
 	}
-	if direct.HeaderNames != "Accept,User-Agent,X-Lawn-Client-Proto,X-Lawn-Client-Tls" {
+	if direct.HeaderNames != "Accept,User-Agent,X-Lawn-Client-Ja4,X-Lawn-Client-Proto,X-Lawn-Client-Tls" {
 		t.Errorf("header_names direct: %q", direct.HeaderNames)
+	}
+}
+
+func TestValidJA4(t *testing.T) {
+	for s, ok := range map[string]bool{
+		"t13d1516h2_8daaf6152771_e5627efa2ab1": true,
+		"t13i181000_85036bcba153_d41ae481755e": true,
+		"t13d1516h2_8daaf6152771_e5627efa2abg": false, // not hex
+		"T13d1516h2_8daaf6152771_e5627efa2ab1": false,
+		"t13d1516h2-8daaf6152771_e5627efa2ab1": false,
+		"t13d1516h2_8daaf6152771_e5627efa2ab":  false,
+		"forged":                               false,
+		"":                                     false,
+	} {
+		if got := validJA4(s); (got != "") != ok {
+			t.Errorf("validJA4(%q) = %q", s, got)
+		}
 	}
 }
 

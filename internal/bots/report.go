@@ -38,8 +38,13 @@ func Write(w io.Writer, r *Report, o WriteOptions) {
 		shown = append(shown, b)
 	}
 	fmt.Fprintf(w, "Bots, %s (generated %s)\n", window, r.Generated.Format("2006-01-02 15:04 UTC"))
-	fmt.Fprintf(w, "%d clients seen; %d bot groups: %d not in crawlers.yaml, %d first seen recently.\n\n",
+	fmt.Fprintf(w, "%d clients seen; %d bot groups: %d not in crawlers.yaml, %d first seen recently.\n",
 		r.Clients, len(r.Bots), unknown, fresh)
+	fmt.Fprintln(w, "SCORE adds up the signals in each group's \"why a bot\" (3: no browser does this, 2: rare for a person, 1: supporting).")
+	if !r.Hosting {
+		fmt.Fprintln(w, "Hosting-ASN list not loaded (hosting_asns_path), so the hosting-network signal is off.")
+	}
+	fmt.Fprintln(w)
 	if len(shown) == 0 {
 		fmt.Fprintln(w, "Nothing to show.")
 		return
@@ -49,7 +54,7 @@ func Write(w io.Writer, r *Report, o WriteOptions) {
 		shown = shown[:o.Limit]
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "BOT\tKNOWN AS\tVERDICT\tREQ\tROBOTS\tBAIT\tLAWN\tDEPTH\tOPEN\tIPS\tTOP NETWORK\tPTR DOMAIN\tFIRST SEEN\tLAST SEEN\tFLAGS")
+	fmt.Fprintln(tw, "BOT\tKNOWN AS\tVERDICT\tSCORE\tREQ\tROBOTS\tBAIT\tLAWN\tDEPTH\tOPEN\tIPS\tTOP NETWORK\tPTR DOMAIN\tFIRST SEEN\tLAST SEEN\tFLAGS")
 	for _, b := range shown {
 		known := b.Known
 		if known == "" {
@@ -62,8 +67,8 @@ func Write(w io.Writer, r *Report, o WriteOptions) {
 		if b.Known == "" {
 			flags = append(flags, "UNKNOWN")
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
-			clip(b.Token, 40), clip(known, 30), b.Verdict, b.Requests, b.Robots, b.Bait, b.Violations, b.MaxDepth,
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n",
+			clip(b.Token, 40), clip(known, 30), b.Verdict, b.Score, b.Requests, b.Robots, b.Bait, b.Violations, b.MaxDepth,
 			b.Frontier.openShare(),
 			len(b.IPs), clip(joinOr(top(b.ASNs, 1), "-"), 40), joinOr(top(b.PTRDomains, 1), "-"),
 			ts(b.FirstSeen), ts(b.LastSeen), strings.Join(flags, " "))
@@ -94,7 +99,7 @@ func writeDetails(w io.Writer, b *Bot) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  sample UA:    %s\n", clip(b.SampleUA, 300))
 	fmt.Fprintf(w, "  contact:      %s\n", orDash(b.Contact))
-	fmt.Fprintf(w, "  why a bot:    %s\n", joinOr(sortedKeys(b.Reasons), "-"))
+	fmt.Fprintf(w, "  why a bot:    %s (score %d)\n", joinOr(sortedKeys(b.Reasons), "-"), b.Score)
 	fmt.Fprintf(w, "  identity:     %s\n", statusSummary(b.Statuses))
 	fmt.Fprintf(w, "  networks:     %s\n", joinOr(top(b.ASNs, 3), "-"))
 	fmt.Fprintf(w, "  PTR domains:  %s\n", joinOr(top(b.PTRDomains, 3), "none"))
@@ -103,8 +108,12 @@ func writeDetails(w io.Writer, b *Bot) {
 	fmt.Fprintf(w, "  via:          %s\n", schemeSummary(b.Schemes))
 	fmt.Fprintf(w, "  protocol:     %s\n", joinOr(top(b.Protos, 2), "-"))
 	fmt.Fprintf(w, "  TLS:          %s\n", joinOr(top(b.TLS, 2), "-"))
+	fmt.Fprintf(w, "  JA4:          %s\n", joinOr(top(b.JA4, 3), "-"))
 	fmt.Fprintf(w, "  activity:     %d requests from %d IPs; %d robots.txt, %d bait pages, %d /lawn/ (max depth %d)\n",
 		b.Requests, len(b.IPs), b.Robots, b.Bait, b.Violations, b.MaxDepth)
+	if b.MaxPerMin > 0 {
+		fmt.Fprintf(w, "  pace:         up to %d /lawn/ pages in one minute (one client)\n", b.MaxPerMin)
+	}
 	if b.Children > 0 {
 		fmt.Fprintf(w, "  frontier:     %d child fetches; %d followed a parent fetch by this UA, %d while the parent was still dripping (%s)\n",
 			b.Children, b.Follows, b.Open, b.Frontier.openShare())

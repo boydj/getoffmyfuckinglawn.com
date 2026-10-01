@@ -4,6 +4,7 @@
 #
 # Bundle layout (built by deploy.sh):
 #   bin/lawn                     static linux/amd64 binary
+#   bin/caddy                    lawn's Caddy build (caddy/), linux/amd64
 #   templates/                   copy of web/templates
 #   corpus/                      *.txt training corpus
 #   config/crawlers.yaml
@@ -23,7 +24,7 @@ LIB=/usr/local/lib/lawn
 BIN=/usr/local/bin/lawn
 log() { echo "install: $*"; }
 
-for f in bin/lawn config/crawlers.yaml config/config.example.yaml deploy/host-setup.sh deploy/Caddyfile deploy/torrc; do
+for f in bin/lawn bin/caddy config/crawlers.yaml config/config.example.yaml deploy/host-setup.sh deploy/Caddyfile deploy/torrc; do
 	[ -e "$src/$f" ] || { echo "install: bundle is missing $f" >&2; exit 1; }
 done
 
@@ -39,11 +40,14 @@ for u in "${units[@]}"; do
 	install -m 0644 -o root -g root "$src/deploy/$u" "/etc/systemd/system/$u"
 done
 install -d -m 0755 "$LIB"
-for s in host-setup.sh asn-refresh.sh backup.sh reboot-check.sh patch-status.sh; do
+for s in host-setup.sh asn-refresh.sh hosting-refresh.sh backup.sh reboot-check.sh patch-status.sh; do
 	install -m 0755 -o root -g root "$src/deploy/$s" "$LIB/$s"
 done
 install -m 0644 -o root -g root "$src/deploy/Caddyfile" "$LIB/Caddyfile"
 install -m 0644 -o root -g root "$src/deploy/torrc" "$LIB/torrc"
+# Put in place as /usr/bin/caddy by host-setup.sh (before it validates the
+# Caddyfile, which needs the ja4 plugin).
+install -m 0755 -o root -g root "$src/bin/caddy" "$LIB/caddy"
 
 # Packages, user, dirs, secret, Caddy, sysctl, journald, timers.
 "$LIB/host-setup.sh"

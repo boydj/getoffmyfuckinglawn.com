@@ -21,6 +21,16 @@
 </table></div>
 {{if gt .MemberTotal (len .Members)}}<p class="note">Showing {{len .Members}} of {{.MemberTotal}}.</p>{{end}}{{end}}
 
+{{if .G.TraitClients}}<h2 id="traits">Observed traits</h2>
+<p class="note">What these clients sent and how they walked the maze, from the raw logs we keep (the last {{.RawDays}} days). Each line is an observation, not a verdict on who or what a client is (<a href="/#traits">how they are measured</a>). A client is one address with one user agent; {{.G.TraitClients}} {{if eq .G.TraitClients 1}}client{{else}}clients{{end}} here.</p>
+{{if .G.Traits}}<div class="tw"><table>
+<thead><tr><th class="l">Observed</th><th>Clients</th></tr></thead>
+<tbody>{{range .G.Traits}}<tr><td class="w">{{trait .Signal}}</td><td>{{.Clients}}</td></tr>
+{{end}}</tbody>
+</table></div>{{else}}<p class="note">None of the traits we look for.</p>{{end}}
+{{if .G.Pace}}<p>Fastest pace: {{.G.Pace}} disallowed {{if eq .G.Pace 1}}page{{else}}pages{{end}} within one minute from one client.</p>{{end}}
+{{with .G.JA4s}}<p class="note">TLS fingerprints (<a href="/#traits">JA4</a>), most used first: {{range $i, $j := .}}{{if $i}}, {{end}}<code>{{$j.JA4}}</code> ({{$j.Clients}}){{end}}.</p>{{end}}
+{{end}}
 <h2>Daily</h2>
 {{with .Spark}}<svg viewBox="0 0 {{.W}} {{.H}}" width="{{.W}}" height="{{.H}}" role="img" aria-label="Disallowed pages per day, last {{.Days}} days"><polyline fill="none" stroke="currentColor" stroke-width="1.5" points="{{.Points}}"/></svg>
 <p class="note">Pages per day, last {{.Days}} days (peak {{.Peak}}).</p>{{end}}
