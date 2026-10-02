@@ -623,8 +623,13 @@ func Bots(ctx context.Context, cfg config.Config, o BotsOptions, out io.Writer) 
 	if err != nil {
 		return err
 	}
+	ja4db, err := bots.LoadJA4DB(cfg.JA4DBPath)
+	if err != nil {
+		// A bad download only costs the names; the report still runs.
+		fmt.Fprintf(out, "warning: %v\n", err)
+	}
 	r, err := bots.Collect(ctx, bots.Options{DB: st.DB(), Crawlers: crawlers, Since: since, All: o.All,
-		Exclude: cfg.Exclude, Hosting: hosting})
+		Exclude: cfg.Exclude, Hosting: hosting, JA4DB: ja4db})
 	if err != nil {
 		return err
 	}

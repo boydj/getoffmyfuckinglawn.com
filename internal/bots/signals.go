@@ -39,13 +39,16 @@ const (
 	SigErrors       = "mostly-errors"
 	SigNoFavicon    = "browser-ua-no-favicon"
 	SigHosting      = "hosting-network"
+	// + the first name JA4DB gives, e.g. "Python (Linux)". Private: rests
+	// on FoxIO's database, not on our own observations.
+	SigTLSJA4DB = "browser-ua-tls-ja4db-non-browser:"
 )
 
 var weights = map[string]int{
 	SigNamed: 3, SigRobots: 2, SigEntered: 1, SigNoAcceptLang: 2, SigPTR: 2,
 	SigNoH2: 3, SigTLSLibrary: 3, SigHTTP1: 2, SigNoSecFetch: 3, SigHead: 1,
 	SigFast: 2, SigRegular: 2, SigOpensEarly: 3, SigDeep: 1, SigErrors: 1,
-	SigNoFavicon: 1, SigHosting: 1,
+	SigNoFavicon: 1, SigHosting: 1, SigTLSJA4DB: 3,
 }
 
 // supportingOnly signals never list a client on their own: plenty of
@@ -67,8 +70,10 @@ const (
 
 // Weight is a signal's weight (prefix-matched for SigTLSLibrary).
 func Weight(sig string) int {
-	if strings.HasPrefix(sig, SigTLSLibrary) {
-		return weights[SigTLSLibrary]
+	for _, p := range []string{SigTLSLibrary, SigTLSJA4DB} {
+		if strings.HasPrefix(sig, p) {
+			return weights[p]
+		}
 	}
 	return weights[sig]
 }
@@ -94,6 +99,7 @@ func listable(reasons []string) bool {
 
 // scorer holds what signals needs beyond the client itself.
 type scorer struct {
+	ja4db   *JA4DB              // nil: not loaded
 	hosting map[uint32]bool     // nil: list not loaded
 	libJA4  map[string][]string // JA4 -> HTTP libraries seen with it
 }
@@ -183,6 +189,15 @@ func (s *scorer) signals(c *Client, named bool) []string {
 	slices.Sort(libs)
 	for _, l := range libs {
 		add(SigTLSLibrary + l)
+	}
+	// FoxIO's database knows this fingerprint only from non-browser
+	// software. One signal per client, named after the first fingerprint
+	// that qualifies.
+	for _, fp := range c.JA4s {
+		if names, ok := s.ja4db.NonBrowser(fp); ok && len(names) > 0 {
+			add(SigTLSJA4DB + names[0])
+			break
+		}
 	}
 	if c.HTTPS > 0 && c.HTTPSH1 == c.HTTPS {
 		add(SigHTTP1)

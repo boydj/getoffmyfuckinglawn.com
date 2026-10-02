@@ -23,6 +23,7 @@ type Options struct {
 	Now      func() time.Time
 	Exclude  []netip.Prefix  // operator networks (config exclude_cidrs): skipped
 	Hosting  map[uint32]bool // hosting/datacenter ASNs (LoadHostingASNs); nil = not loaded
+	JA4DB    *JA4DB          // FoxIO's JA4 database (LoadJA4DB); nil = not loaded
 }
 
 // Verdicts: what a group did with respect to robots.txt.
@@ -113,6 +114,7 @@ type Report struct {
 	Since     time.Duration
 	Clients   int
 	Hosting   bool   // the hosting-ASN list was loaded
+	JA4DB     *JA4DB // nil = not loaded
 	Bots      []*Bot // sorted: new first, then unknown, then by requests
 }
 
@@ -142,8 +144,9 @@ func Collect(ctx context.Context, opt Options) (*Report, error) {
 		return nil, err
 	}
 
-	rep := &Report{Generated: now, Since: opt.Since, Clients: len(clients), Hosting: opt.Hosting != nil}
+	rep := &Report{Generated: now, Since: opt.Since, Clients: len(clients), Hosting: opt.Hosting != nil, JA4DB: opt.JA4DB}
 	sc := newScorer(clients, opt.Hosting)
+	sc.ja4db = opt.JA4DB
 	groups := map[string]*Bot{}
 	for _, c := range clients {
 		token, named := Token(c.UA)

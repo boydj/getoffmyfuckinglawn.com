@@ -91,6 +91,7 @@ type Config struct {
 	DBPath          string    `yaml:"db_path"`
 	ASNDBPath       string    `yaml:"asn_db_path"`
 	HostingASNsPath string    `yaml:"hosting_asns_path"`
+	JA4DBPath       string    `yaml:"ja4db_path"`
 	PublicDir       string    `yaml:"public_dir"`
 	CorpusDir       string    `yaml:"corpus_dir"`
 	CrawlersFile    string    `yaml:"crawlers_file"`
@@ -133,6 +134,7 @@ func Default() Config {
 		DBPath:          "/var/lib/lawn/lawn.db",
 		ASNDBPath:       "/var/lib/lawn/ip2asn-combined.tsv.gz",
 		HostingASNsPath: "/var/lib/lawn/hosting-asns.txt",
+		JA4DBPath:       "/var/lib/lawn/ja4db.json",
 		PublicDir:       "/var/lib/lawn/public",
 		CorpusDir:       "./corpus",
 		CrawlersFile:    "./config/crawlers.yaml",
@@ -169,6 +171,7 @@ var envOverrides = []struct {
 	{"LAWN_DB_PATH", func(c *Config) *string { return &c.DBPath }},
 	{"LAWN_ASN_DB_PATH", func(c *Config) *string { return &c.ASNDBPath }},
 	{"LAWN_HOSTING_ASNS_PATH", func(c *Config) *string { return &c.HostingASNsPath }},
+	{"LAWN_JA4DB_PATH", func(c *Config) *string { return &c.JA4DBPath }},
 	{"LAWN_PUBLIC_DIR", func(c *Config) *string { return &c.PublicDir }},
 	{"LAWN_CORPUS_DIR", func(c *Config) *string { return &c.CorpusDir }},
 	{"LAWN_CRAWLERS_FILE", func(c *Config) *string { return &c.CrawlersFile }},
