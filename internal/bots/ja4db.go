@@ -37,7 +37,15 @@ type JA4DBRow struct {
 // engines they are built on. The database labels entries in free text, so
 // this errs towards "browser": a fingerprint counts as non-browser only when
 // none of its entries looks like one.
-var browserish = regexp.MustCompile(`(?i)chrom|firefox|safari|\bedge\b|opera|brave|vivaldi|browser|webkit|gecko|mozilla|samsung ?internet|yandex|duckduckgo|\barc\b|\btor\b`)
+var browserish = regexp.MustCompile(`(?i)chrom|firefox|safari|\bedge\b|opera|brave|vivaldi|browser|webkit|gecko|mozilla|samsung ?internet|yandex|duckduckgo|\barc\b|\btor\b|msie|trident`)
+
+// mozillaPrefix is the "Mozilla/5.0" every browser user agent starts with.
+// Scanners copy it too ("Mozilla/5.0 zgrab/0.x", "Mozilla/5.0 (compatible;
+// CensysInspect/1.1)"), so it says nothing about being a browser.
+var mozillaPrefix = regexp.MustCompile(`^Mozilla/\d\.\d\s*`)
+
+// compatibleProduct is the product in "(compatible; Name/1.0; ...)".
+var compatibleProduct = regexp.MustCompile(`^\(compatible;\s*([^;/)]+?)\s*(?:/[^;)]*)?[;)]`)
 
 // Entry reduces a row to its label. Most rows of the export carry only the
 // user agent the fingerprint was seen with; those are named the way `lawn
@@ -55,7 +63,7 @@ func (r JA4DBRow) Entry() JA4DBEntry {
 		}
 		return e
 	}
-	ua := strings.TrimSpace(r.UserAgent)
+	ua := strings.Trim(r.UserAgent, " \t\"'") // some rows keep the quotes they were pasted with
 	token, named := Token(ua)
 	if named {
 		return JA4DBEntry{Name: token}
@@ -64,7 +72,18 @@ func (r JA4DBRow) Entry() JA4DBEntry {
 	if b, ok := ParseBrowser(ua); ok {
 		return JA4DBEntry{Name: strings.ToUpper(b.Family[:1]) + b.Family[1:] + " user agent", Browser: true}
 	}
-	return JA4DBEntry{Name: "browser-like user agent", Browser: browserish.MatchString(ua)}
+	rest := mozillaPrefix.ReplaceAllString(ua, "")
+	if browserish.MatchString(rest) {
+		return JA4DBEntry{Name: "browser-like user agent", Browser: true}
+	}
+	// "Mozilla/5.0" and nothing a browser would add: a scanner or script.
+	if m := compatibleProduct.FindStringSubmatch(rest); m != nil {
+		return JA4DBEntry{Name: m[1]}
+	}
+	if f := strings.Fields(rest); len(f) > 0 && !strings.HasPrefix(rest, "(") {
+		return JA4DBEntry{Name: strings.SplitN(f[0], "/", 2)[0]}
+	}
+	return JA4DBEntry{Name: "Mozilla-only user agent"}
 }
 
 // Len is the number of distinct fingerprints known.

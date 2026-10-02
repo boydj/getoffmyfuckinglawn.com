@@ -92,6 +92,15 @@ func TestJA4DBRowEntry(t *testing.T) {
 		{UserAgent: "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"}:           {Name: "Firefox user agent", Browser: true},
 		{UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"}: {Name: "browser-like user agent", Browser: true},
 		{UserAgent: ""}: {Name: "(empty user agent)"},
+		// "Mozilla/5.0" alone is not a browser: scanners copy it.
+		{UserAgent: "Mozilla/5.0 (compatible; Nmap-Discovery/1.0)"}:                                   {Name: "Nmap-Discovery"},
+		{UserAgent: "Mozilla/5.0 (compatible; CensysInspect/1.1; +https://about.censys.io/)"}:         {Name: "CensysInspect"},
+		{UserAgent: "Mozilla/5.0 (compatible; Nmap Scripting Engine; http://nmap.org/book/nse.html)"}: {Name: "Nmap Scripting Engine"},
+		{UserAgent: "Mozilla/5.0 zgrab/0.x"}:                                                          {Name: "zgrab"},
+		{UserAgent: "Mozilla/5.0"}:                                                                    {Name: "Mozilla-only user agent"},
+		{UserAgent: "Mozilla/5.0 (compatible)"}:                                                       {Name: "Mozilla-only user agent"},
+		{UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}:                                      {Name: "Mozilla-only user agent"},
+		{UserAgent: "Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.1; Trident/4.0)"}:                {Name: "browser-like user agent", Browser: true},
 	} {
 		if got := r.Entry(); got != want {
 			t.Errorf("%+v: %+v, want %+v", r, got, want)
