@@ -137,3 +137,24 @@ func TestWellBehavedTraitsAndWallLink(t *testing.T) {
 		t.Errorf("well-behaved.json traits missing:\n%s", raw)
 	}
 }
+
+// The data files never contain null lists, even when empty (promised under
+// "Using this data" on the homepage).
+func TestFeedsNeverNull(t *testing.T) {
+	opt := testOptions(t, openStore(t))
+	build(t, opt)
+	root := filepath.Join(opt.PublicDir, "shame")
+	for _, f := range []string{"feed.json", "well-behaved.json"} {
+		if got := read(t, filepath.Join(root, f)); got != "[]\n" {
+			t.Errorf("%s with no data: %q", f, got)
+		}
+	}
+	s := standardFixture(t)
+	opt = testOptions(t, s)
+	build(t, opt)
+	for _, f := range []string{"feed.json", "well-behaved.json"} {
+		if raw := read(t, filepath.Join(opt.PublicDir, "shame", f)); strings.Count(raw, "null") != strings.Count(raw, `"asn": null`) {
+			t.Errorf("%s has a null other than asn:\n%s", f, raw)
+		}
+	}
+}

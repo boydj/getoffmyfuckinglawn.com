@@ -335,6 +335,32 @@ func TestShameStatic(t *testing.T) {
 	}
 }
 
+// The published data files answer conditional requests with 304 (promised
+// under "Using this data" on the homepage).
+func TestShameConditionalGet(t *testing.T) {
+	r := newRig(t)
+	must(t, os.MkdirAll(filepath.Join(r.pub, "shame"), 0o755))
+	must(t, os.WriteFile(filepath.Join(r.pub, "shame", "feed.json"), []byte("[]\n"), 0o644))
+	get := func(ims string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/shame/feed.json", nil)
+		req.Header.Set("User-Agent", "feed-reader/1")
+		if ims != "" {
+			req.Header.Set("If-Modified-Since", ims)
+		}
+		w := httptest.NewRecorder()
+		r.srv.ServeHTTP(w, req)
+		return w
+	}
+	w := get("")
+	lm := w.Header().Get("Last-Modified")
+	if w.Code != 200 || lm == "" || w.Header().Get("Cache-Control") != "public, max-age=60" {
+		t.Fatalf("first fetch: %d last-modified=%q cache=%q", w.Code, lm, w.Header().Get("Cache-Control"))
+	}
+	if w := get(lm); w.Code != http.StatusNotModified || w.Body.Len() != 0 {
+		t.Errorf("conditional fetch: %d, %d bytes", w.Code, w.Body.Len())
+	}
+}
+
 func TestMetricsExposition(t *testing.T) {
 	r := newRig(t)
 	r.do("GET", "/lawn/a", "", "ua")

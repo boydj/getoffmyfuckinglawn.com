@@ -410,3 +410,8 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
   - each row shows its three strongest traits with client counts, on a page budget like the rest of the page;
   - `well-behaved.json` gains `traits` and `trait_clients`. Section 8 fixes only `feed.json`'s fields.
   - a row links to the wall page of the same network (anonymous, spoofed) or claimed crawler (verified, unverifiable) when other clients of it requested `/lawn/`. The wall and this page sort clients one at a time (address + user agent), so one network can rightly appear on both.
+
+## Using this data (follow-up)
+- **The published data is CC0 1.0.** It's facts about requests to this site. Public domain is the least friction for blocklists and research, and needs no attribution machinery. The code stays MIT.
+- **Stability promise:** fields are only ever added. A breaking change goes to a new file name, with the old file kept for at least 90 days and the change announced on the homepage. Unknown strings are `""`, lists are never `null`, and `asn` is `null` when unknown or over Tor. Tests cover the 304-on-`If-Modified-Since` and never-`null` promises.
+- **Documented on the homepage (`#data`), not a separate page.** That's where the methodology and the feed links already are, and it costs about 3 KB of the 50 KB budget (the homepage is about 15 KB).

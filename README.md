@@ -351,6 +351,10 @@ This deletes the instance (with its database and on-box backups), the firewall g
 - **Cost:** check Vultr's current pricing for `vc2-2c-2gb`. Vultr DNS is free, and Vultr automatic backups are off because the box keeps its own.
 - **Isolation:** don't co-host anything else on the box or reuse its IP. Only the public service ports (80, 443 over TCP and UDP, 70, 1965) and ICMP are open to the world, and password SSH is off.
 
+## Using the data
+
+The wall's data files (`/shame/feed.json`, `/shame/well-behaved.json`, `/shame/blocklist.txt`) are public and dedicated to the public domain under CC0 1.0. Their fields, freshness and stability promise (fields are only ever added; a breaking change goes to a new file name with the old one kept for 90 days) are documented on the homepage under "Using this data" (`web/templates/home.html`, `#data`). Tests hold the code to two of those promises: conditional requests get `304`, and lists are never `null`.
+
 ## Status
 
 Built and tested; never applied to a real Vultr account. See the final section of [DECISIONS.md](DECISIONS.md) for what's untested and the open TODOs.
