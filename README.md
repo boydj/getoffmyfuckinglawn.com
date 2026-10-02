@@ -353,7 +353,7 @@ This deletes the instance (with its database and on-box backups), the firewall g
 
 ## Using the data
 
-The wall's data files (`/shame/feed.json`, `/shame/well-behaved.json`, `/shame/blocklist.txt`) are public and dedicated to the public domain under CC0 1.0. Their fields, freshness and stability promise (fields are only ever added; a breaking change goes to a new file name with the old one kept for 90 days) are documented on the homepage under "Using this data" (`web/templates/home.html`, `#data`). Tests hold the code to two of those promises: conditional requests get `304`, and lists are never `null`.
+The wall's data files (`/shame/feed.json`, `/shame/well-behaved.json`, `/shame/blocklist.txt`) are public under CC BY 4.0: free to use with credit (`blocklist.txt` repeats the licence in its header). Their fields, freshness and stability promise (fields are only ever added; a breaking change goes to a new file name with the old one kept for 90 days) are documented on the homepage under "Using this data" (`web/templates/home.html`, `#data`). Tests hold the code to two of those promises: conditional requests get `304`, and lists are never `null`.
 
 ## Status
 
