@@ -143,7 +143,7 @@ Everything goes through `make`. The target is one dedicated Vultr instance that 
 - **cloud-init** (first boot):
   - writes the `deploy/` units, scripts and Caddyfile;
   - puts the secret in `/etc/lawn/env`;
-  - runs `deploy/host-setup.sh`, which installs Caddy (official apt repo), Tor (the Tor Project's apt repo, signing key pinned by fingerprint), sqlite3, unattended-upgrades and needrestart, creates the `lawn` user and directories, caps journald, tunes socket sysctls, enables the timers, and downloads the iptoasn.com ASN dataset.
+  - runs `deploy/host-setup.sh`, which installs Caddy (official apt repo), Tor (the Tor Project's apt repo, signing key pinned by fingerprint), sqlite3, unattended-upgrades and needrestart, makes DNS lookups retry (`options rotate attempts:3 timeout:2`, kept across DHCP renewals), creates the `lawn` user and directories, caps journald, tunes socket sysctls, enables the timers, and downloads the iptoasn.com ASN dataset.
 - **`make deploy`**
   - cross-compiles static linux/amd64 binaries of lawn and of lawn's Caddy build (`caddy/`, Caddy plus the JA4 plugin) and ships them, the templates, the corpus, `crawlers.yaml` and the `deploy/` files over one SSH connection;
   - installs that Caddy in place of the packaged binary, the way Caddy documents for custom builds: `dpkg-divert` moves the package's binary to `/usr/bin/caddy.default`, and `update-alternatives` points `/usr/bin/caddy` at `/usr/bin/caddy.custom`. The package keeps its unit and user;

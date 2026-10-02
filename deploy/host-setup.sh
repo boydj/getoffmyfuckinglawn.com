@@ -62,6 +62,35 @@ if [ "${#missing[@]}" -gt 0 ]; then
 	apt-get install -y -q --no-install-recommends "${missing[@]}"
 fi
 
+# --------------------------------------------------------------------- DNS
+# Vultr's resolvers time out now and then (seen on the host: about one lookup
+# in five failing). Both glibc (curl, apt) and Go's resolver (lawn's
+# reverse-DNS crawler checks) honour these options: try the servers in turn,
+# three attempts each, two seconds per try.
+resolv_opts='options rotate attempts:3 timeout:2'
+if [ -L /etc/resolv.conf ] && readlink -f /etc/resolv.conf | grep -q '/systemd/resolve/'; then
+	log "DNS: /etc/resolv.conf belongs to systemd-resolved, which retries itself; leaving it"
+else
+	# dhclient rewrites /etc/resolv.conf at every lease renewal; its exit
+	# hooks run afterwards, so this puts the options back each time.
+	install -d -m 0755 /etc/dhcp/dhclient-exit-hooks.d
+	write_if_changed /etc/dhcp/dhclient-exit-hooks.d/lawn-resolv-options 0644 <<HOOK || true
+# Managed by lawn host-setup.sh: resolver retry options, re-added after
+# dhclient rewrites /etc/resolv.conf.
+grep -q '^options' /etc/resolv.conf 2>/dev/null || echo '$resolv_opts' >>/etc/resolv.conf
+HOOK
+	# With the resolvconf package, the file is generated; its tail is kept.
+	if [ -d /etc/resolvconf/resolv.conf.d ]; then
+		if printf '%s\n' "$resolv_opts" | write_if_changed /etc/resolvconf/resolv.conf.d/tail 0644; then
+			resolvconf -u || true
+		fi
+	fi
+	if [ -f /etc/resolv.conf ] && ! grep -q '^options' /etc/resolv.conf; then
+		printf '%s\n' "$resolv_opts" >>/etc/resolv.conf
+		log "DNS: added '$resolv_opts' to /etc/resolv.conf"
+	fi
+fi
+
 # ------------------------------------------------------------------- caddy
 # Official Caddy apt repository (https://caddyserver.com/docs/install).
 keyring=/usr/share/keyrings/caddy-stable-archive-keyring.gpg

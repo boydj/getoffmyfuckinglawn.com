@@ -429,3 +429,8 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
   - 60 corrupt fingerprints (binary bytes) are rejected by an exact JA4 format check. Labels are cached per row, which brought load time from 4 s to 0.65 s.
 - **Used privately only**, as before: names in detail blocks, plus the private signal `browser-ua-tls-ja4db-non-browser:<name>` (weight 3). Wall claims rest on our own observations.
 - **The host's DNS (Vultr's resolvers) failed intermittently** during the first attempts. curl now also retries name-resolution errors (`--retry-all-errors`).
+- **Resolver retries on the host (`host-setup.sh`).** `options rotate attempts:3 timeout:2` in `/etc/resolv.conf`. glibc honours it (curl, apt), and so does Go's pure resolver (lawn's reverse-DNS crawler checks).
+  - dhclient rewrites the file at every lease renewal, so an exit hook re-adds the line.
+  - With the resolvconf package, the line goes into its `tail` instead.
+  - A systemd-resolved stub is left alone, since it retries on its own.
+  - An existing `options` line is never touched.
