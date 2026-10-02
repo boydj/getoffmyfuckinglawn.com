@@ -143,7 +143,7 @@ Everything goes through `make`. The target is one dedicated Vultr instance that 
 - **cloud-init** (first boot):
   - writes the `deploy/` units, scripts and Caddyfile;
   - puts the secret in `/etc/lawn/env`;
-  - runs `deploy/host-setup.sh`, which installs Caddy (official apt repo), Tor (the Tor Project's apt repo, signing key pinned by fingerprint), sqlite3, unattended-upgrades and needrestart, creates the `lawn` user and directories, caps journald, tunes socket sysctls, enables the timers, and downloads the iptoasn.com ASN dataset.
+  - runs `deploy/host-setup.sh`, which installs Caddy (official apt repo), Tor (the Tor Project's apt repo, signing key pinned by fingerprint), sqlite3, unattended-upgrades and needrestart, makes DNS lookups retry (`options rotate attempts:3 timeout:2`, kept across DHCP renewals), creates the `lawn` user and directories, caps journald, tunes socket sysctls, enables the timers, and downloads the iptoasn.com ASN dataset.
 - **`make deploy`**
   - cross-compiles static linux/amd64 binaries of lawn and of lawn's Caddy build (`caddy/`, Caddy plus the JA4 plugin) and ships them, the templates, the corpus, `crawlers.yaml` and the `deploy/` files over one SSH connection;
   - installs that Caddy in place of the packaged binary, the way Caddy documents for custom builds: `dpkg-divert` moves the package's binary to `/usr/bin/caddy.default`, and `update-alternatives` points `/usr/bin/caddy` at `/usr/bin/caddy.custom`. The package keeps its unit and user;
@@ -216,7 +216,7 @@ SSH is restricted to `admin_cidrs`, which doesn't include GitHub-hosted runners,
 | `/etc/lawn/env` | `LAWN_SECRET=...`, 0640 root:lawn, written once |
 | `/etc/lawn/caddy.env` | `LAWN_DOMAIN=...` for the Caddyfile |
 | `/opt/lawn/{corpus,templates}` | app files (WorkingDirectory) |
-| `/var/lib/lawn/` | `lawn.db`, `ip2asn-combined.tsv.gz`, `hosting-asns.txt`, `ja4db.json`, `public/`, `ranges/`, `backups/` |
+| `/var/lib/lawn/` | `lawn.db`, `ip2asn-combined.tsv.gz`, `hosting-asns.txt`, `ja4db.csv`, `public/`, `ranges/`, `backups/` |
 | `/usr/bin/caddy.custom` | lawn's Caddy build (`/usr/bin/caddy` points here; the packaged binary is `caddy.default`) |
 
 - **Listeners:** the app listens on `127.0.0.1:8080` (site) and `127.0.0.1:9090` (metrics).
@@ -242,7 +242,7 @@ lawn visitors --ip 198.51.100.9 --since all          # one client's full timelin
 **Viewing the maze without being logged.** The admin listener (`admin_listen`, localhost only) also serves the maze: `/lawn/...` renders exactly what the public site would, all at once, with no drip, no limits and no log row. Open an SSH tunnel with `ssh -L 9090:127.0.0.1:9090 root@<ip>` and browse `http://localhost:9090/`. That page lists the sitemap's entry points, and the links on each maze page keep working. `/metrics` is on the same port. Browsing the public site from your own networks is fine too once they are in `exclude_cidrs`.
 
 **Timers**
-- **Weekly iptoasn.com refresh:** validates gzip, size and format, swaps the file in atomically, then reloads lawn. The same unit then fetches [X4BNet's datacenter ASN list](https://github.com/X4BNet/lists_vpn) (MIT) into `hosting-asns.txt`, and FoxIO's [JA4DB](https://ja4db.com) into `ja4db.json`, both for `lawn bots` only; a failed download keeps the old file.
+- **Weekly iptoasn.com refresh:** validates gzip, size and format, swaps the file in atomically, then reloads lawn. The same unit then fetches [X4BNet's datacenter ASN list](https://github.com/X4BNet/lists_vpn) (MIT) into `hosting-asns.txt`, and the last public snapshot of FoxIO's JA4DB (the CSV export at [Niicolaa/ja4db-export](https://github.com/Niicolaa/ja4db-export), pinned to one commit; JA4DB itself closed in May 2026) into `ja4db.csv`, both for `lawn bots` only; a failed download keeps the old file.
 - **Daily `lawn verify-refresh`.**
 - **Nightly `VACUUM INTO` backup:** `/var/lib/lawn/backups/lawn-YYYY-MM-DD.db`, `quick_check`ed, newest 7 kept.
 
@@ -289,7 +289,7 @@ GROUP BY 1,2 ORDER BY n DESC LIMIT 30;"
   | `fast-maze-walk` | 2 | 30+ maze pages within one minute |
   | `metronome-timing` | 2 | 20+ gaps between maze fetches, evenly spaced (coefficient of variation < 0.25) |
   | `browser-ua-head-requests`, `deep-in-maze` (10+), `mostly-errors` | 1 | supporting |
-  | `browser-ua-tls-ja4db-non-browser:<name>` | 3 | private only: FoxIO's [JA4DB](https://ja4db.com) knows its JA4 fingerprint only from non-browser software (named) |
+  | `browser-ua-tls-ja4db-non-browser:<name>` | 3 | private only: the last public snapshot of FoxIO's JA4DB (May 2026) knows its JA4 fingerprint only from non-browser software (named) |
   | `hosting-network`, `browser-ua-no-favicon` | 1 | supporting only: never list a client on their own (VPN users, cached favicons) |
 
   The existing signals weigh 3 (UA names a bot or library), 2 (robots.txt, no `Accept-Language`, crawler-looking PTR) and 1 (entered `/lawn/`). `SCORE` adds up a group's signals.

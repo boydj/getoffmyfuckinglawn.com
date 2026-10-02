@@ -1,7 +1,7 @@
 package bots
 
 import (
-	"encoding/json"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"io"
@@ -12,37 +12,25 @@ import (
 	"strings"
 )
 
-// JA4DB is FoxIO's JA4+ signature database (https://ja4db.com), reduced to
-// what `lawn bots` uses: for each JA4 (TLS client) fingerprint, the software
-// it has been observed from. It is private analysis only; nothing from it is
-// published.
+// JA4DB is a snapshot of FoxIO's JA4+ signature database, reduced to what
+// `lawn bots` uses: for each JA4 (TLS client) fingerprint, the software it
+// was observed from. FoxIO closed the database in May 2026; the snapshot is
+// the CSV export at github.com/Niicolaa/ja4db-export (frozen, no licence
+// stated), pinned to one commit by deploy/ja4db-refresh.sh. It is private
+// analysis only; nothing from it is published.
 type JA4DB struct {
-	entries map[string][]JA4DBEntry
+	entries map[string][]JA4DBEntry // distinct per fingerprint
 }
 
-// JA4DBEntry is one observation of a fingerprint.
+// JA4DBEntry is one distinct label for a fingerprint.
 type JA4DBEntry struct {
-	Application string `json:"application"`
-	Library     string `json:"library"`
-	OS          string `json:"os"`
-	UserAgent   string `json:"user_agent_string"`
-	Verified    bool   `json:"verified"`
-	JA4         string `json:"ja4_fingerprint"`
+	Name    string // application or library (plus OS), else the product its user agent names
+	Browser bool   // describes a web browser
 }
 
-// Name is how the entry is shown: application, else library, plus the OS.
-func (e JA4DBEntry) Name() string {
-	n := strings.TrimSpace(e.Application)
-	if n == "" {
-		n = strings.TrimSpace(e.Library)
-	}
-	if n == "" {
-		return ""
-	}
-	if os := strings.TrimSpace(e.OS); os != "" {
-		n += " (" + os + ")"
-	}
-	return n
+// JA4DBRow is one row of the export, before reduction.
+type JA4DBRow struct {
+	Application, Library, OS, UserAgent, JA4 string
 }
 
 // browserish matches application/library names of web browsers and the
@@ -51,10 +39,32 @@ func (e JA4DBEntry) Name() string {
 // none of its entries looks like one.
 var browserish = regexp.MustCompile(`(?i)chrom|firefox|safari|\bedge\b|opera|brave|vivaldi|browser|webkit|gecko|mozilla|samsung ?internet|yandex|duckduckgo|\barc\b|\btor\b`)
 
-// IsBrowser reports whether the entry describes a web browser.
-func (e JA4DBEntry) IsBrowser() bool {
-	return browserish.MatchString(e.Application) || browserish.MatchString(e.Library) ||
-		e.Application == "" && e.Library == "" && browserish.MatchString(e.UserAgent)
+// Entry reduces a row to its label. Most rows of the export carry only the
+// user agent the fingerprint was seen with; those are named the way `lawn
+// bots` names any client ("curl", "python-requests", "Pleroma"), so the
+// full user agent (which can hold contact addresses) is never kept.
+func (r JA4DBRow) Entry() JA4DBEntry {
+	name := strings.TrimSpace(r.Application)
+	if name == "" {
+		name = strings.TrimSpace(r.Library)
+	}
+	if name != "" {
+		e := JA4DBEntry{Name: name, Browser: browserish.MatchString(r.Application) || browserish.MatchString(r.Library)}
+		if os := strings.TrimSpace(r.OS); os != "" {
+			e.Name += " (" + os + ")"
+		}
+		return e
+	}
+	ua := strings.TrimSpace(r.UserAgent)
+	token, named := Token(ua)
+	if named {
+		return JA4DBEntry{Name: token}
+	}
+	// A browser-looking user agent: name the family when we can.
+	if b, ok := ParseBrowser(ua); ok {
+		return JA4DBEntry{Name: strings.ToUpper(b.Family[:1]) + b.Family[1:] + " user agent", Browser: true}
+	}
+	return JA4DBEntry{Name: "browser-like user agent", Browser: browserish.MatchString(ua)}
 }
 
 // Len is the number of distinct fingerprints known.
@@ -65,7 +75,7 @@ func (db *JA4DB) Len() int {
 	return len(db.entries)
 }
 
-// Lookup returns the entries for a JA4 fingerprint.
+// Lookup returns the distinct labels of a JA4 fingerprint.
 func (db *JA4DB) Lookup(fp string) []JA4DBEntry {
 	if db == nil {
 		return nil
@@ -73,40 +83,59 @@ func (db *JA4DB) Lookup(fp string) []JA4DBEntry {
 	return db.entries[fp]
 }
 
-// Names returns the distinct names of fp's entries, sorted, at most n.
+// Names returns the distinct names of fp's labels, sorted, at most n.
 func (db *JA4DB) Names(fp string, n int) []string {
 	var out []string
 	for _, e := range db.Lookup(fp) {
-		if name := e.Name(); name != "" && !slices.Contains(out, name) {
-			out = append(out, name)
+		if e.Name != "" && !slices.Contains(out, e.Name) {
+			out = append(out, e.Name)
 		}
 	}
 	slices.Sort(out)
 	return out[:min(n, len(out))]
 }
 
-// NonBrowser reports whether every entry for fp describes something other
-// than a browser, and returns their names. A fingerprint with no entries, or
-// with any browser entry, is not non-browser.
+// NonBrowser reports whether every label of fp describes something other
+// than a browser, and returns their names. A fingerprint with no labels, or
+// with any browser label, is not non-browser.
 func (db *JA4DB) NonBrowser(fp string) ([]string, bool) {
 	es := db.Lookup(fp)
 	if len(es) == 0 {
 		return nil, false
 	}
 	for _, e := range es {
-		if e.IsBrowser() {
+		if e.Browser {
 			return nil, false
 		}
 	}
 	return db.Names(fp, 3), true
 }
 
-// maxJA4DBBytes bounds what LoadJA4DB reads; the real file is a few MB.
+// isJA4 reports whether s has the shape of a JA4 fingerprint:
+// "t13d1516h2_8daaf6152771_e5627efa2ab1" (lower-case letters and digits,
+// hex hashes, underscores at 10 and 23).
+func isJA4(s string) bool {
+	if len(s) != 36 || s[10] != '_' || s[23] != '_' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case i == 10 || i == 23:
+		case i > 10 && (c >= '0' && c <= '9' || c >= 'a' && c <= 'f'):
+		case i < 10 && (c >= '0' && c <= '9' || c >= 'a' && c <= 'z'):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// maxJA4DBBytes bounds what LoadJA4DB reads; the export is about 12 MB.
 const maxJA4DBBytes = 256 << 20
 
-// LoadJA4DB reads the database's JSON download (an array of objects; only
-// the fields in JA4DBEntry are used, entries without a JA4 fingerprint are
-// skipped). A missing file returns nil, nil: the JA4DB signal is then off.
+// LoadJA4DB reads the export. A missing file returns nil, nil: the JA4DB
+// names and signal are then off.
 func LoadJA4DB(path string) (*JA4DB, error) {
 	if path == "" {
 		return nil, nil
@@ -126,35 +155,60 @@ func LoadJA4DB(path string) (*JA4DB, error) {
 	return db, nil
 }
 
-// ParseJA4DB decodes the JSON array one entry at a time, so memory follows
-// the entries kept, not the file size.
+// ParseJA4DB reads the export's CSV (a header row naming its columns, as in
+// csv/ja4_fingerprint.csv). Only application, library, os,
+// user_agent_string and ja4_fingerprint are used; rows without a
+// 36-character JA4 are skipped, and repeated labels are kept once.
 func ParseJA4DB(r io.Reader) (*JA4DB, error) {
-	dec := json.NewDecoder(r)
-	if t, err := dec.Token(); err != nil || t != json.Delim('[') {
-		return nil, fmt.Errorf("ja4db: not a JSON array")
+	cr := csv.NewReader(r)
+	cr.FieldsPerRecord = -1
+	cr.ReuseRecord = true
+	head, err := cr.Read()
+	if err != nil {
+		return nil, fmt.Errorf("ja4db: header: %w", err)
+	}
+	col := map[string]int{}
+	for i, h := range head {
+		col[strings.TrimSpace(strings.TrimPrefix(h, "\ufeff"))] = i
+	}
+	fpCol, ok := col["ja4_fingerprint"]
+	if !ok {
+		return nil, errors.New("ja4db: no ja4_fingerprint column")
+	}
+	get := func(rec []string, name string) string {
+		if i, ok := col[name]; ok && i < len(rec) {
+			return rec[i]
+		}
+		return ""
 	}
 	db := &JA4DB{entries: map[string][]JA4DBEntry{}}
-	for dec.More() {
-		var e JA4DBEntry
-		if err := dec.Decode(&e); err != nil {
+	// Most rows repeat a user agent; naming one runs several regexps.
+	labels := map[JA4DBRow]JA4DBEntry{}
+	for {
+		rec, err := cr.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
 			return nil, fmt.Errorf("ja4db: %w", err)
 		}
-		e.JA4 = strings.TrimSpace(e.JA4)
-		if len(e.JA4) != 36 {
-			continue // no (or not a) TLS client fingerprint
+		if fpCol >= len(rec) {
+			continue
 		}
-		e.UserAgent = truncateUA(e.UserAgent)
-		db.entries[e.JA4] = append(db.entries[e.JA4], e)
-	}
-	if _, err := dec.Token(); err != nil {
-		return nil, fmt.Errorf("ja4db: %w", err)
+		fp := strings.TrimSpace(rec[fpCol])
+		if !isJA4(fp) {
+			continue // no TLS client fingerprint, or a corrupt one (the export has some)
+		}
+		row := JA4DBRow{Application: get(rec, "application"), Library: get(rec, "library"), OS: get(rec, "os"),
+			UserAgent: get(rec, "user_agent_string")}
+		e, ok := labels[row]
+		if !ok {
+			e = row.Entry()
+			labels[row] = e
+		}
+		if !slices.Contains(db.entries[fp], e) {
+			db.entries[fp] = append(db.entries[fp], e)
+		}
 	}
 	return db, nil
-}
-
-func truncateUA(s string) string {
-	if len(s) > 200 {
-		return s[:200]
-	}
-	return s
 }

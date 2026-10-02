@@ -416,13 +416,21 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
 - **Stability promise:** fields are only ever added. A breaking change goes to a new file name, with the old file kept for at least 90 days and the change announced on the homepage. Unknown strings are `""`, lists are never `null`, and `asn` is `null` when unknown or over Tor. Tests cover the 304-on-`If-Modified-Since` and never-`null` promises.
 - **Documented on the homepage (`#data`), not a separate page.** That's where the methodology and the feed links already are, and it costs about 3 KB of the 50 KB budget (the homepage is about 15 KB).
 
-## FoxIO's JA4DB in `lawn bots` (follow-up, operator request)
-- **Downloaded on the host, never committed.** The weekly ASN unit also runs `ja4db-refresh.sh` (from `https://ja4db.com/api/download/`). It refuses anything that isn't a JSON array with at least 200 `ja4_fingerprint` keys, and a failure keeps the old file.
-- **Used privately only.**
-  - Detail blocks name each fingerprint the database knows ("[JA4DB: Chromium Browser (Windows)]").
-  - A browser user agent whose fingerprint the database knows *only* from non-browser software gets `browser-ua-tls-ja4db-non-browser:<name>` (weight 3).
-  - That signal is not public. A wall claim must rest on our own observations, not on a third-party label.
-  - The terms of the bulk download could not be read from the build sandbox (ja4db.com is blocked). FoxIO's JA4+ licence permits internal and non-commercial use, which private analysis is.
-- **Format learned from SANS's ja4db-search**, which reads the same download: an array of objects with `ja4_fingerprint`, `application`, `user_agent_string` and more. The parser streams the array, keeps only those fields plus `library`, `os` and `verified`, and skips entries without a 36-character JA4. Unknown fields are ignored.
-- **"Browser" is decided generously.** An entry is a browser if its application, library or (failing both) user agent names a browser or engine. A fingerprint counts as non-browser only when none of its entries is one, because a wrong "non-browser" would accuse real browsers.
-- **Untested against the real file** (blocked here). After deploy, `lawn bots` prints how many fingerprints it loaded.
+## JA4DB snapshot in `lawn bots` (follow-up, operator request)
+- **JA4DB closed.** FoxIO's database moved to ja4db.foxio.io behind accounts in May 2026. The public `api/download/` and `api/read/` now return 404, and the app offers only signed-in "full downloads". The first version of this feature, which fetched `ja4db.com/api/download/`, never got data on the host.
+- **The operator chose the last public snapshot** over the alternatives below. The snapshot is the CSV export at `github.com/Niicolaa/ja4db-export`, which mirrored the public API daily until it closed (last update 2026-05-15).
+  - **Pinned to commit `af1618e5…`**, so an edited or deleted repository can't change our data. `ja4db-refresh.sh` checks the exact header and at least 10,000 rows.
+  - **Caveats, accepted:** it is frozen, so it grows stale. The repository states no licence for republishing FoxIO's data. It is used only for private analysis and never published or committed.
+  - **Not chosen:**
+    - FoxIO's official `ja4plus-mapping.csv`: official, but only about 30 JA4 rows.
+    - A JA4DB account: FoxIO's terms, a stored token, and a format we can't see.
+- **Most rows carry only the user agent a fingerprint was seen with:** 71,750 of 74,506. Those are named the way `lawn bots` names any client ("curl", "python-requests", "Pleroma"), and only that name is kept, never the user agent itself, which can carry admins' email addresses.
+  - A browser-looking user agent counts as a browser label. A fingerprint is "non-browser" only when none of its labels is a browser: 232 of 1,573 in the snapshot (Python, Go/Sliver, curl, CCBot, facebookexternalhit, …).
+  - 60 corrupt fingerprints (binary bytes) are rejected by an exact JA4 format check. Labels are cached per row, which brought load time from 4 s to 0.65 s.
+- **Used privately only**, as before: names in detail blocks, plus the private signal `browser-ua-tls-ja4db-non-browser:<name>` (weight 3). Wall claims rest on our own observations.
+- **The host's DNS (Vultr's resolvers) failed intermittently** during the first attempts. curl now also retries name-resolution errors (`--retry-all-errors`).
+- **Resolver retries on the host (`host-setup.sh`).** `options rotate attempts:3 timeout:2` in `/etc/resolv.conf`. glibc honours it (curl, apt), and so does Go's pure resolver (lawn's reverse-DNS crawler checks).
+  - dhclient rewrites the file at every lease renewal, so an exit hook re-adds the line.
+  - With the resolvconf package, the line goes into its `tail` instead.
+  - A systemd-resolved stub is left alone, since it retries on its own.
+  - An existing `options` line is never touched.
