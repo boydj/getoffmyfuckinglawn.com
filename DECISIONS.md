@@ -410,3 +410,19 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
   - each row shows its three strongest traits with client counts, on a page budget like the rest of the page;
   - `well-behaved.json` gains `traits` and `trait_clients`. Section 8 fixes only `feed.json`'s fields.
   - a row links to the wall page of the same network (anonymous, spoofed) or claimed crawler (verified, unverifiable) when other clients of it requested `/lawn/`. The wall and this page sort clients one at a time (address + user agent), so one network can rightly appear on both.
+
+## Using this data (follow-up)
+- **The published data is CC BY 4.0 (operator's choice: attribution required).** I first proposed CC0. The homepage gives a ready-made credit line (`Data: getoffmyfuckinglawn.com (CC BY 4.0)`, linking to `/#data`). `blocklist.txt` carries the licence in its comment header, because that file is often copied on its own. The JSON files don't: a wrapper object around their arrays would break the stability promise. The code stays MIT.
+- **Stability promise:** fields are only ever added. A breaking change goes to a new file name, with the old file kept for at least 90 days and the change announced on the homepage. Unknown strings are `""`, lists are never `null`, and `asn` is `null` when unknown or over Tor. Tests cover the 304-on-`If-Modified-Since` and never-`null` promises.
+- **Documented on the homepage (`#data`), not a separate page.** That's where the methodology and the feed links already are, and it costs about 3 KB of the 50 KB budget (the homepage is about 15 KB).
+
+## FoxIO's JA4DB in `lawn bots` (follow-up, operator request)
+- **Downloaded on the host, never committed.** The weekly ASN unit also runs `ja4db-refresh.sh` (from `https://ja4db.com/api/download/`). It refuses anything that isn't a JSON array with at least 200 `ja4_fingerprint` keys, and a failure keeps the old file.
+- **Used privately only.**
+  - Detail blocks name each fingerprint the database knows ("[JA4DB: Chromium Browser (Windows)]").
+  - A browser user agent whose fingerprint the database knows *only* from non-browser software gets `browser-ua-tls-ja4db-non-browser:<name>` (weight 3).
+  - That signal is not public. A wall claim must rest on our own observations, not on a third-party label.
+  - The terms of the bulk download could not be read from the build sandbox (ja4db.com is blocked). FoxIO's JA4+ licence permits internal and non-commercial use, which private analysis is.
+- **Format learned from SANS's ja4db-search**, which reads the same download: an array of objects with `ja4_fingerprint`, `application`, `user_agent_string` and more. The parser streams the array, keeps only those fields plus `library`, `os` and `verified`, and skips entries without a 36-character JA4. Unknown fields are ignored.
+- **"Browser" is decided generously.** An entry is a browser if its application, library or (failing both) user agent names a browser or engine. A fingerprint counts as non-browser only when none of its entries is one, because a wrong "non-browser" would accuse real browsers.
+- **Untested against the real file** (blocked here). After deploy, `lawn bots` prints how many fingerprints it loaded.

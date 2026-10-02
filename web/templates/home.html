@@ -56,9 +56,34 @@ Each page also shows the fastest pace one client reached and the most common JA4
 {{if .Onion}}<dt>Over Tor</dt>
 <dd>Visitors of the onion mirror have no IP address. Tor gives each connection a circuit number, which is logged in its place and never published. Their requests appear on the wall as one network, "Tor onion service". Crawler claims made over Tor cannot be verified, so a known crawler's user agent is shown as claimed, unverifiable.</dd>
 {{end}}<dt>Machine-readable data</dt>
-<dd><a href="/shame/feed.json">/shame/feed.json</a> (all offenders), <a href="/shame/well-behaved.json">/shame/well-behaved.json</a> (crawlers that followed the rules) and <a href="/shame/blocklist.txt">/shame/blocklist.txt</a> (CIDRs of verified crawlers plus spoofers above a violation threshold).</dd>
+<dd><a href="/shame/feed.json">/shame/feed.json</a> (all offenders), <a href="/shame/well-behaved.json">/shame/well-behaved.json</a> (crawlers that followed the rules) and <a href="/shame/blocklist.txt">/shame/blocklist.txt</a> (CIDRs of verified crawlers plus spoofers above a violation threshold). Formats and terms: <a href="#data">Using this data</a>.</dd>
 <dt>Corrections</dt>
 <dd>If you run a crawler listed here and believe the classification is wrong, publish an official verification method (reverse DNS or an IP range list) and it will be used.</dd>
+</dl>
+
+<h2 id="data">Using this data</h2>
+<p>The data behind the wall is published for anyone to use: in a blocklist, in research, or to keep an eye on the crawler you run. It is licensed under <a href="https://creativecommons.org/licenses/by/4.0/">Creative Commons Attribution 4.0 (CC BY 4.0)</a>: use, share and adapt it for any purpose, as long as you credit it. A line like this is enough, wherever you show or redistribute the data: <code>Data: getoffmyfuckinglawn.com (CC BY 4.0)</code>, linked to <code>https://getoffmyfuckinglawn.com/#data</code>. Say if you changed it.</p>
+<dl>
+<dt><a href="/shame/feed.json">/shame/feed.json</a></dt>
+<dd>A JSON array, one object per offender: per identity status, claimed organisation and network (ASN). Ordered by time held, longest first. Fields:
+<ul>
+<li><code>org</code>: the organisation the user agent claims; for <code>anonymous</code> entries, the network's label (<code>"AS64500 EXAMPLE-NET"</code>).</li>
+<li><code>status</code>: <code>verified</code>, <code>user_triggered</code> (verified, and the vendor says robots.txt may not apply), <code>spoofed</code>, <code>unverifiable</code> or <code>anonymous</code>, as defined under <a href="#methodology">Methodology</a>.</li>
+<li><code>asn</code> (number, or <code>null</code> when unknown or over Tor) and <code>asn_org</code>.</li>
+<li><code>cidrs</code>: addresses, under the rule in "What is published": individual addresses (<code>/32</code>, <code>/128</code>) only for <code>verified</code> entries, otherwise <code>/24</code> or <code>/48</code> networks.</li>
+<li><code>hours_held</code>, <code>pages</code> (requests under <code>/lawn/</code>) and <code>max_depth</code>, all time.</li>
+<li><code>first_seen</code> and <code>last_seen</code>: RFC 3339 times in UTC.</li>
+</ul></dd>
+<dt><a href="/shame/well-behaved.json">/shame/well-behaved.json</a></dt>
+<dd>A JSON array of clients that fetched robots.txt and never requested <code>/lawn/</code>, most recently seen first. Same <code>org</code>, <code>status</code>, <code>asn</code>, <code>asn_org</code>, <code>cidrs</code>, <code>first_seen</code> and <code>last_seen</code> as above (spoofed entries are named after their network), plus <code>claimed_org</code>, <code>robots_fetches</code>, <code>requests</code> (any path), <code>saw_bait</code> (fetched a page carrying hidden links into the maze), <code>trait_clients</code>, and <code>traits</code>: <code>[{"trait": …, "clients": …}]</code>, the <a href="#traits">observed traits</a> and how many of the entry's clients showed each.</dd>
+<dt><a href="/shame/blocklist.txt">/shame/blocklist.txt</a></dt>
+<dd>One CIDR per line, after <code>#</code> comment lines giving the generation time and the rules: addresses of verified crawlers that fetched disallowed paths, and the networks of spoofed crawler user agents above a violation threshold. Anonymous and unverifiable clients are never listed, so this is not a list of every scraper; it is a list of the ones we can name.</dd>
+<dt>Freshness and fetching</dt>
+<dd>The files are rebuilt every few minutes (observed traits at most hourly) and served with <code>Last-Modified</code>, so conditional requests (<code>If-Modified-Since</code>) are answered with <code>304</code>. Fetching more often than every five minutes gains nothing. robots.txt allows everything outside <code>/lawn/</code>, these files included.</dd>
+<dt>Stability</dt>
+<dd>Fields are only ever added, never renamed, removed or given a new meaning; ignore fields you don't know. A change that breaks that would go to a new file name, with the old file kept for at least 90 days and the change announced here. Timestamps and strings that are unknown are empty (<code>""</code>), and lists are never <code>null</code>.</dd>
+<dt>What it is not</dt>
+<dd>A record of what our logs show for this one site, with nothing added. "Verified" means the vendor's own verification method passed; nothing here is a claim about anyone's intent.</dd>
 </dl>
 
 <h2>For crawler operators</h2>

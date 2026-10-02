@@ -45,6 +45,11 @@ func Write(w io.Writer, r *Report, o WriteOptions) {
 	if !r.Hosting {
 		fmt.Fprintln(w, "Hosting-ASN list not loaded (hosting_asns_path), so the hosting-network signal is off.")
 	}
+	if r.JA4DB == nil {
+		fmt.Fprintln(w, "FoxIO JA4DB not loaded (ja4db_path), so JA4 fingerprints are not named.")
+	} else {
+		fmt.Fprintf(w, "JA4 names from FoxIO's JA4DB (%d fingerprints).\n", r.JA4DB.Len())
+	}
 	fmt.Fprintln(w)
 	if len(shown) == 0 {
 		fmt.Fprintln(w, "Nothing to show.")
@@ -85,11 +90,11 @@ func Write(w io.Writer, r *Report, o WriteOptions) {
 			continue
 		}
 		n++
-		writeDetails(w, b)
+		writeDetails(w, b, r.JA4DB)
 	}
 }
 
-func writeDetails(w io.Writer, b *Bot) {
+func writeDetails(w io.Writer, b *Bot, db *JA4DB) {
 	fmt.Fprintf(w, "\n--- %s", b.Token)
 	if b.New {
 		fmt.Fprint(w, " [NEW]")
@@ -109,7 +114,7 @@ func writeDetails(w io.Writer, b *Bot) {
 	fmt.Fprintf(w, "  via:          %s\n", schemeSummary(b.Schemes))
 	fmt.Fprintf(w, "  protocol:     %s\n", joinOr(top(b.Protos, 2), "-"))
 	fmt.Fprintf(w, "  TLS:          %s\n", joinOr(top(b.TLS, 2), "-"))
-	fmt.Fprintf(w, "  JA4:          %s\n", joinOr(top(b.JA4, 3), "-"))
+	fmt.Fprintf(w, "  JA4:          %s\n", joinOr(ja4Labels(top(b.JA4, 3), db), "-"))
 	fmt.Fprintf(w, "  activity:     %d requests from %d IPs; %d robots.txt, %d bait pages, %d /lawn/ (max depth %d)\n",
 		b.Requests, len(b.IPs), b.Robots, b.Bait, b.Violations, b.MaxDepth)
 	if b.MaxPerMin > 0 {
@@ -126,6 +131,19 @@ func writeDetails(w io.Writer, b *Bot) {
 		fmt.Fprintf(w, "      ua_patterns: ['\\b%s\\b']\n", regexp.QuoteMeta(b.Token))
 		fmt.Fprintln(w, "      verify: {method: none}  # TODO: official verification method, if any")
 	}
+}
+
+// ja4Labels adds JA4DB's names to fingerprints it knows:
+// "t13d1516h2_… [JA4DB: Chromium (Windows)]".
+func ja4Labels(fps []string, db *JA4DB) []string {
+	out := make([]string, len(fps))
+	for i, fp := range fps {
+		out[i] = fp
+		if names := db.Names(fp, 2); len(names) > 0 {
+			out[i] += " [JA4DB: " + strings.Join(names, "; ") + "]"
+		}
+	}
+	return out
 }
 
 // reasonSummary lists a group's signals, strongest first, each with how

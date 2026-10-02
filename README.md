@@ -216,7 +216,7 @@ SSH is restricted to `admin_cidrs`, which doesn't include GitHub-hosted runners,
 | `/etc/lawn/env` | `LAWN_SECRET=...`, 0640 root:lawn, written once |
 | `/etc/lawn/caddy.env` | `LAWN_DOMAIN=...` for the Caddyfile |
 | `/opt/lawn/{corpus,templates}` | app files (WorkingDirectory) |
-| `/var/lib/lawn/` | `lawn.db`, `ip2asn-combined.tsv.gz`, `hosting-asns.txt`, `public/`, `ranges/`, `backups/` |
+| `/var/lib/lawn/` | `lawn.db`, `ip2asn-combined.tsv.gz`, `hosting-asns.txt`, `ja4db.json`, `public/`, `ranges/`, `backups/` |
 | `/usr/bin/caddy.custom` | lawn's Caddy build (`/usr/bin/caddy` points here; the packaged binary is `caddy.default`) |
 
 - **Listeners:** the app listens on `127.0.0.1:8080` (site) and `127.0.0.1:9090` (metrics).
@@ -242,7 +242,7 @@ lawn visitors --ip 198.51.100.9 --since all          # one client's full timelin
 **Viewing the maze without being logged.** The admin listener (`admin_listen`, localhost only) also serves the maze: `/lawn/...` renders exactly what the public site would, all at once, with no drip, no limits and no log row. Open an SSH tunnel with `ssh -L 9090:127.0.0.1:9090 root@<ip>` and browse `http://localhost:9090/`. That page lists the sitemap's entry points, and the links on each maze page keep working. `/metrics` is on the same port. Browsing the public site from your own networks is fine too once they are in `exclude_cidrs`.
 
 **Timers**
-- **Weekly iptoasn.com refresh:** validates gzip, size and format, swaps the file in atomically, then reloads lawn. The same unit then fetches [X4BNet's datacenter ASN list](https://github.com/X4BNet/lists_vpn) (MIT) into `hosting-asns.txt` for `lawn bots`; a failed download keeps the old file.
+- **Weekly iptoasn.com refresh:** validates gzip, size and format, swaps the file in atomically, then reloads lawn. The same unit then fetches [X4BNet's datacenter ASN list](https://github.com/X4BNet/lists_vpn) (MIT) into `hosting-asns.txt`, and FoxIO's [JA4DB](https://ja4db.com) into `ja4db.json`, both for `lawn bots` only; a failed download keeps the old file.
 - **Daily `lawn verify-refresh`.**
 - **Nightly `VACUUM INTO` backup:** `/var/lib/lawn/backups/lawn-YYYY-MM-DD.db`, `quick_check`ed, newest 7 kept.
 
@@ -289,6 +289,7 @@ GROUP BY 1,2 ORDER BY n DESC LIMIT 30;"
   | `fast-maze-walk` | 2 | 30+ maze pages within one minute |
   | `metronome-timing` | 2 | 20+ gaps between maze fetches, evenly spaced (coefficient of variation < 0.25) |
   | `browser-ua-head-requests`, `deep-in-maze` (10+), `mostly-errors` | 1 | supporting |
+  | `browser-ua-tls-ja4db-non-browser:<name>` | 3 | private only: FoxIO's [JA4DB](https://ja4db.com) knows its JA4 fingerprint only from non-browser software (named) |
   | `hosting-network`, `browser-ua-no-favicon` | 1 | supporting only: never list a client on their own (VPN users, cached favicons) |
 
   The existing signals weigh 3 (UA names a bot or library), 2 (robots.txt, no `Accept-Language`, crawler-looking PTR) and 1 (entered `/lawn/`). `SCORE` adds up a group's signals.
@@ -298,7 +299,7 @@ GROUP BY 1,2 ORDER BY n DESC LIMIT 30;"
 - **Each group gets a verdict:** `compliant`, `entered /lawn/`, `read robots.txt, entered /lawn/`, or `never fetched robots.txt`.
 - **Flags:** `NEW` for groups first seen in the last 7 days, `UNKNOWN` for groups not in `crawlers.yaml`.
 - **`OPEN` column (frontier amplification):** every maze link carries a short id of the page it came from, and each `/lawn/` row logs `page_id` and `parent_id`. `OPEN` is the share of followed links that the same user agent fetched while the parent page was *still dripping*, from any of its IPs. A high share means the crawler harvests links from the leading `<nav>` and fans out, so each held connection spawns more; a low share means it waits for pages to finish. The detail block gives the raw counts.
-- **Detail blocks** for unknown and new groups: each signal with how many of the group's clients showed it (a browser-like group merges every client on one network), sample UA, contact URL, reverse-DNS domains, networks, header fingerprint, HTTP/TLS versions, JA4 fingerprints, fastest pace, and a `crawlers.yaml` stub to complete from the vendor's docs.
+- **Detail blocks** for unknown and new groups: each signal with how many of the group's clients showed it (a browser-like group merges every client on one network), sample UA, contact URL, reverse-DNS domains, networks, header fingerprint, HTTP/TLS versions, JA4 fingerprints (named from JA4DB where it knows them), fastest pace, and a `crawlers.yaml` stub to complete from the vendor's docs.
 
 ```sh
 lawn bots --since 7d --unknown     # what's new that we don't recognise?
@@ -350,6 +351,10 @@ This deletes the instance (with its database and on-box backups), the firewall g
 
 - **Cost:** check Vultr's current pricing for `vc2-2c-2gb`. Vultr DNS is free, and Vultr automatic backups are off because the box keeps its own.
 - **Isolation:** don't co-host anything else on the box or reuse its IP. Only the public service ports (80, 443 over TCP and UDP, 70, 1965) and ICMP are open to the world, and password SSH is off.
+
+## Using the data
+
+The wall's data files (`/shame/feed.json`, `/shame/well-behaved.json`, `/shame/blocklist.txt`) are public under CC BY 4.0: free to use with credit (`blocklist.txt` repeats the licence in its header). Their fields, freshness and stability promise (fields are only ever added; a breaking change goes to a new file name with the old one kept for 90 days) are documented on the homepage under "Using this data" (`web/templates/home.html`, `#data`). Tests hold the code to two of those promises: conditional requests get `304`, and lists are never `null`.
 
 ## Status
 

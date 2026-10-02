@@ -216,6 +216,7 @@ func TestBlocklist(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(txt), "\n")
 	if !strings.HasPrefix(lines[0], "#") || !strings.Contains(txt, "# generated 2026-09-26T12:00:00Z\n") ||
 		!strings.Contains(txt, "# details: https://lawn.example/#methodology\n") || !strings.Contains(txt, "# methodology:") ||
+		!strings.Contains(txt, "# license: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); credit: https://lawn.example/#data\n") ||
 		!strings.Contains(txt, ">= 50") {
 		t.Errorf("header:\n%s", txt)
 	}

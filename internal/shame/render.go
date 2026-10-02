@@ -459,6 +459,7 @@ func BlocklistText(r *Report, baseURL string) []byte {
 	fmt.Fprintf(&b, "#   - spoofed crawler UAs (failed that verification) with >= %d disallowed fetches per (claimed org, ASN): /24 (IPv4) or /48 (IPv6)\n", max(r.BlocklistMin, 1))
 	fmt.Fprintf(&b, "#   - anonymous and unverifiable clients are never listed\n")
 	fmt.Fprintf(&b, "# details: %s/#methodology\n", strings.TrimRight(baseURL, "/"))
+	fmt.Fprintf(&b, "# license: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/); credit: %s/#data\n", strings.TrimRight(baseURL, "/"))
 	fmt.Fprintf(&b, "# entries: %d\n", len(r.Blocklist))
 	for _, c := range r.Blocklist {
 		b.WriteString(c)

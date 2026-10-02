@@ -354,7 +354,8 @@ else
 fi
 
 # ------------------------------------------------------------- ASN dataset
-if [ ! -s /var/lib/lawn/ip2asn-combined.tsv.gz ] || { [ -x "$LIB/hosting-refresh.sh" ] && [ ! -s /var/lib/lawn/hosting-asns.txt ]; }; then
+if [ ! -s /var/lib/lawn/ip2asn-combined.tsv.gz ] || { [ -x "$LIB/hosting-refresh.sh" ] && [ ! -s /var/lib/lawn/hosting-asns.txt ]; } ||
+	{ [ -x "$LIB/ja4db-refresh.sh" ] && [ ! -s /var/lib/lawn/ja4db.json ]; }; then
 	log "fetching initial ASN datasets"
 	systemctl start lawn-asn-refresh.service || log "WARNING: initial ASN download failed; the weekly timer will retry (or: systemctl start lawn-asn-refresh)"
 fi
