@@ -425,7 +425,8 @@ Choices SPEC.md didn't dictate, or places the implementation deviates from it. O
     - FoxIO's official `ja4plus-mapping.csv`: official, but only about 30 JA4 rows.
     - A JA4DB account: FoxIO's terms, a stored token, and a format we can't see.
 - **Most rows carry only the user agent a fingerprint was seen with:** 71,750 of 74,506. Those are named the way `lawn bots` names any client ("curl", "python-requests", "Pleroma"), and only that name is kept, never the user agent itself, which can carry admins' email addresses.
-  - A browser-looking user agent counts as a browser label. A fingerprint is "non-browser" only when none of its labels is a browser: 232 of 1,573 in the snapshot (Python, Go/Sliver, curl, CCBot, facebookexternalhit, …).
+  - A browser-looking user agent counts as a browser label. A fingerprint is "non-browser" only when none of its labels is a browser: 270 of 1,573 in the snapshot (Python, Go/Sliver, curl, CCBot, facebookexternalhit, zgrab, …).
+  - **"Mozilla/5.0" alone is not a browser label.** Scanners copy it ("Mozilla/5.0 zgrab/0.x", "Mozilla/5.0 (compatible; CensysInspect/1.1)"), so only what follows it is checked. Counting the prefix made 351 such user agents browser labels and hid 38 non-browser fingerprints. Old MSIE/Trident user agents still count as browsers, to err the safe way.
   - 60 corrupt fingerprints (binary bytes) are rejected by an exact JA4 format check. Labels are cached per row, which brought load time from 4 s to 0.65 s.
 - **Used privately only**, as before: names in detail blocks, plus the private signal `browser-ua-tls-ja4db-non-browser:<name>` (weight 3). Wall claims rest on our own observations.
 - **The host's DNS (Vultr's resolvers) failed intermittently** during the first attempts. curl now also retries name-resolution errors (`--retry-all-errors`).
