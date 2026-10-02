@@ -23,7 +23,7 @@ type Options struct {
 	Now      func() time.Time
 	Exclude  []netip.Prefix  // operator networks (config exclude_cidrs): skipped
 	Hosting  map[uint32]bool // hosting/datacenter ASNs (LoadHostingASNs); nil = not loaded
-	JA4DB    *JA4DB          // FoxIO's JA4 database (LoadJA4DB); nil = not loaded
+	JA4DB    *JA4DB          // JA4DB snapshot (LoadJA4DB); nil = not loaded
 }
 
 // Verdicts: what a group did with respect to robots.txt.

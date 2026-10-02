@@ -46,9 +46,9 @@ func Write(w io.Writer, r *Report, o WriteOptions) {
 		fmt.Fprintln(w, "Hosting-ASN list not loaded (hosting_asns_path), so the hosting-network signal is off.")
 	}
 	if r.JA4DB == nil {
-		fmt.Fprintln(w, "FoxIO JA4DB not loaded (ja4db_path), so JA4 fingerprints are not named.")
+		fmt.Fprintln(w, "JA4DB snapshot not loaded (ja4db_path), so JA4 fingerprints are not named.")
 	} else {
-		fmt.Fprintf(w, "JA4 names from FoxIO's JA4DB (%d fingerprints).\n", r.JA4DB.Len())
+		fmt.Fprintf(w, "JA4 names from the JA4DB snapshot (%d fingerprints).\n", r.JA4DB.Len())
 	}
 	fmt.Fprintln(w)
 	if len(shown) == 0 {

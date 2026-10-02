@@ -134,7 +134,7 @@ func Default() Config {
 		DBPath:          "/var/lib/lawn/lawn.db",
 		ASNDBPath:       "/var/lib/lawn/ip2asn-combined.tsv.gz",
 		HostingASNsPath: "/var/lib/lawn/hosting-asns.txt",
-		JA4DBPath:       "/var/lib/lawn/ja4db.json",
+		JA4DBPath:       "/var/lib/lawn/ja4db.csv",
 		PublicDir:       "/var/lib/lawn/public",
 		CorpusDir:       "./corpus",
 		CrawlersFile:    "./config/crawlers.yaml",

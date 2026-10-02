@@ -45,11 +45,13 @@ asn_db_path: "/var/lib/lawn/ip2asn-combined.tsv.gz"
 # Only `lawn bots` reads it, as one hint among several; a missing file just
 # leaves that hint out.
 hosting_asns_path: "/var/lib/lawn/hosting-asns.txt"
-# FoxIO's JA4 signature database (https://ja4db.com), refreshed by the same
-# timer. Only `lawn bots` reads it, to name JA4 fingerprints and flag browser
-# user agents whose fingerprint it knows only from other software. Nothing
-# from it is published. A missing file just leaves that out.
-ja4db_path: "/var/lib/lawn/ja4db.json"
+# The last public snapshot of FoxIO's JA4 signature database (JA4DB closed its
+# download in May 2026), fetched by the same timer from a pinned commit of
+# github.com/Niicolaa/ja4db-export. Only `lawn bots` reads it, to name JA4
+# fingerprints and flag browser user agents whose fingerprint it knows only
+# from other software. Nothing from it is published. A missing file just
+# leaves that out.
+ja4db_path: "/var/lib/lawn/ja4db.csv"
 # Output of the wall-of-shame builder (served under /shame/).
 public_dir: "/var/lib/lawn/public"
 # Public-domain training texts for the Markov chain.
